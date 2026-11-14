@@ -5,6 +5,7 @@ import os
 import pathlib
 import queue
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -393,6 +394,7 @@ class Painel:
                 import ctypes
                 self.raiz.update_idletasks()
                 hwnd = ctypes.windll.user32.GetParent(self.raiz.winfo_id())
+                self.hwnd = hwnd
                 # sem moldura o Windows tira a janela da barra de tarefas: devolve o botão dela
                 estilo = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
                 estilo = (estilo & ~0x00000080) | 0x00040000
@@ -409,7 +411,8 @@ class Painel:
             x = (self.raiz.winfo_screenwidth() - 520) // 2
             y = (self.raiz.winfo_screenheight() - 560) // 3
             self.raiz.geometry(f"+{x}+{y}")
-            self.raiz.bind("<Map>", self._ao_restaurar)
+            if not sys.platform.startswith("win"):
+                self.raiz.bind("<Map>", self._ao_restaurar)
             return True
         except Exception:  # noqa: BLE001  (se der errado, fica a moldura normal do Windows)
             try:
@@ -419,9 +422,42 @@ class Painel:
             return False
 
     def minimizar(self):
+        if self.sem_moldura and getattr(self, "hwnd", None):
+            # minimiza direto pelo Windows, sem mexer na moldura (trocar a moldura criava uma janela "fantasma")
+            import ctypes
+            ctypes.windll.user32.ShowWindow(self.hwnd, 6)   # SW_MINIMIZE
+            return
         if self.sem_moldura:
             self.raiz.overrideredirect(False)   # o Windows só minimiza janela com moldura
         self.raiz.iconify()
+
+    def trazer_para_frente(self):
+        """Mostra a janela (chamado quando o programa é aberto de novo com ele já aberto)."""
+        try:
+            if getattr(self, "hwnd", None):
+                import ctypes
+                ctypes.windll.user32.ShowWindow(self.hwnd, 9)   # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(self.hwnd)
+            else:
+                self.raiz.deiconify()
+            self.raiz.lift()
+            self.raiz.attributes("-topmost", True)
+            self.raiz.after(300, lambda: self.raiz.attributes("-topmost", False))
+            self.raiz.focus_force()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def ouvir_instancia(self, sock):
+        """Outra cópia do programa foi aberta: ela avisa aqui e fecha; esta janela vem para a frente."""
+        def laco():
+            while True:
+                try:
+                    c, _ = sock.accept()
+                    c.close()
+                    self.fila.put(("mostrar", None))
+                except Exception:  # noqa: BLE001
+                    return
+        threading.Thread(target=laco, daemon=True).start()
 
     def _ao_restaurar(self, _ev=None):
         if self.sem_moldura and self.raiz.state() == "normal":
@@ -735,7 +771,9 @@ class Painel:
         self.raiz.after(150, self.processar_fila)
 
     def _tratar(self, tipo, val):
-        if tipo == "log":
+        if tipo == "mostrar":
+            self.trazer_para_frente()
+        elif tipo == "log":
             self.escrever(val)
         elif tipo == "estado":
             self.mostrar_estado(val)
@@ -794,10 +832,25 @@ class Painel:
         os._exit(0)
 
 
+PORTA_INSTANCIA = 47826
+
+
 def main():
+    # só uma cópia aberta: se já tiver uma, ela vem para a frente e esta fecha
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", PORTA_INSTANCIA))
+        sock.listen(2)
+    except OSError:
+        try:
+            socket.create_connection(("127.0.0.1", PORTA_INSTANCIA), timeout=2).close()
+        except OSError:
+            pass
+        os._exit(0)
     try:
         raiz = tk.Tk()
-        Painel(raiz)
+        painel = Painel(raiz)
+        painel.ouvir_instancia(sock)
         raiz.mainloop()
     except Exception:
         # sem console (pythonw): guarda o erro num arquivo e avisa
