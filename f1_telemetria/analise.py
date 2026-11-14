@@ -555,7 +555,27 @@ def _pre_volta(amostras, posicoes, trecho, comprimento, passo, cap_bateria, ref_
     return pre
 
 
-def montar_traco(amostras, posicoes, volta, comprimento, passo, tempo_volta_ms, cap_bateria=4e6, mx=None):
+def _alinhar_setores(xs, t_, setores):
+    """Ajusta o relógio da volta para bater com os tempos oficiais dos setores (vindos do servidor).
+    Os carros dos outros pilotos chegam pela internet com posição estimada; sem isso, cada computador
+    mostraria minissetores e diferenças um pouco diferentes para a mesma volta."""
+    if not setores:
+        return t_
+    d2, d3, s1, s2 = setores
+    if not (s1 and s2 and 0 < d2 < d3 < xs[-1]):
+        return t_
+    o1, o2 = _reamostrar(xs, t_, [d2, d3])
+    L = t_[-1]
+    a1, a2 = s1, s1 + s2
+    if not (0 < o1 < o2 < L and 0 < a1 < a2 < L):
+        return t_
+    k = (a1 / o1, (a2 - a1) / (o2 - o1), (L - a2) / (L - o2))
+    if any(not 0.93 < x < 1.07 for x in k):
+        return t_                                   # diferença grande demais: dado estranho, não mexe
+    return [t * k[0] if t <= o1 else a1 + (t - o1) * k[1] if t <= o2 else a2 + (t - o2) * k[2] for t in t_]
+
+
+def montar_traco(amostras, posicoes, volta, comprimento, passo, tempo_volta_ms, cap_bateria=4e6, mx=None, setores=None):
     trecho = _trecho_cronometrado([a for a in amostras if a[1] == volta], comprimento)
     if not trecho:
         return None
@@ -574,6 +594,7 @@ def montar_traco(amostras, posicoes, volta, comprimento, passo, tempo_volta_ms, 
     tempos = [a[3] for a in lim]
     xs = [0.0] + dist + [float(comprimento)]
     t_ = [0.0] + tempos + [float(tempo_volta_ms or tempos[-1])]
+    t_ = _alinhar_setores(xs, t_, setores)
     tr = {
         "t": [round(v) for v in _reamostrar(xs, t_, grade)],
         "v": [round(v) for v in _reamostrar(dist, [a[4] for a in lim], grade)],
@@ -830,16 +851,22 @@ def analisar(caminho):
 
     tracos = []
     tempos_hist = {(c, v["n"]): v for c in carros for v in voltas[c]}
+
+    def setores_de(h):
+        if not h or not h.get("s") or not sess.get("s2") or not sess.get("s3"):
+            return None
+        return (sess["s2"], sess["s3"], h["s"][0], h["s"][1])
     voltas_jog = sorted({a[1] for a in amostras.get(jogador, [])})
     for nv in voltas_jog:
         h = tempos_hist.get((jogador, nv))
-        tr = montar_traco(amostras[jogador], posicoes_xy[jogador], nv, comp, passo, h["ms"] if h else None, p1["ers_max"], mx)
+        tr = montar_traco(amostras[jogador], posicoes_xy[jogador], nv, comp, passo, h["ms"] if h else None, p1["ers_max"], mx,
+                          setores=setores_de(h))
         if tr and h:
             tr.update(carro=jogador, volta=nv, ms=h["ms"], valida=h["valida"], s=h["s"])
             tracos.append(tr)
     for ms, c, nv in ref:
         h = tempos_hist.get((c, nv))
-        tr = montar_traco(amostras[c], posicoes_xy[c], nv, comp, passo, ms, p1["ers_max"])
+        tr = montar_traco(amostras[c], posicoes_xy[c], nv, comp, passo, ms, p1["ers_max"], setores=setores_de(h))
         if tr:
             tr.update(carro=c, volta=nv, ms=ms, valida=True, s=h["s"] if h else None)
             tracos.append(tr)

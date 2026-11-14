@@ -848,7 +848,7 @@ if (corrida) {
     // 4) domínio da pista: quem é mais rápido em cada minissetor
     const comTraco = linhas.filter(x => x.t && x.t.x && x.t.z);
     if (comTraco.length >= 2) {
-      const c4 = card(s, `<h3 style="margin:0 0 2px;font-size:15px">Domínio da pista</h3><p class="desc" style="margin:0 0 8px">A pista é dividida em 25 minissetores do mesmo tamanho; cada trecho tem a cor do piloto mais rápido nele. Escolha até 4 pilotos.</p>`);
+      const c4 = card(s, `<h3 style="margin:0 0 2px;font-size:15px">Domínio da pista</h3><p class="desc" style="margin:0 0 8px">A pista é dividida em 25 minissetores do mesmo tamanho; cada trecho tem a cor do piloto mais rápido nele. Diferenças menores que 0,02 s aparecem em cinza (empate técnico). Escolha até 4 pilotos.</p>`);
       c4.style.marginTop = '14px';
       const ini = comTraco.slice(0, 3).map(x => x.c);
       if (!ini.includes(J) && comTraco.find(x => x.c === J)) ini[Math.min(2, ini.length)] = J;
@@ -856,7 +856,7 @@ if (corrida) {
       const grade = $(`<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:14px;align-items:start;margin-top:8px" class="dom-grade"></div>`); c4.appendChild(grade);
       const lado = $(`<div class="dom-lado"></div>`); grade.appendChild(lado);
       const el = div(grade, 'grafico', 480);
-      const NSEG = 25;
+      const NSEG = 25, EMPATE_MS = 20;
       function desenha() {
         const sel = pega().map(String).filter(c => comTraco.find(x => x.c === c));
         const L = sel.map(c => comTraco.find(x => x.c === c));
@@ -867,7 +867,9 @@ if (corrida) {
         const donos = [], tempos = [];
         for (let k = 0; k < NSEG; k++) {
           const ts = L.map(x => x.t.t[lim[k + 1]] - x.t.t[lim[k]]);
-          const m = Math.min(...ts); donos.push(L[ts.indexOf(m)].c); tempos.push(ts);
+          const m = Math.min(...ts), seg = [...ts].sort((a, b) => a - b)[1];
+          // empate técnico: diferença menor que a margem de erro dos dados (o carro dos outros chega pela internet)
+          donos.push(L.length > 1 && seg - m < EMPATE_MS ? null : L[ts.indexOf(m)].c); tempos.push(ts);
         }
         const X = i => ref.z[i], Y = i => ref.x[i];
         const tr = [{ x: Array.from({ length: n }, (_, i) => X(i)), y: Array.from({ length: n }, (_, i) => Y(i)), mode: 'lines', line: { color: css('--grid'), width: 14 }, hoverinfo: 'skip', showlegend: false }];
@@ -875,10 +877,13 @@ if (corrida) {
           const idx = []; for (let i = lim[k]; i <= lim[k + 1]; i++) idx.push(i);
           const ord = L.map((x, j) => [x.c, tempos[k][j]]).sort((a, b) => a[1] - b[1]);
           const txt = `<b>Minissetor ${k + 1}</b><br>` + ord.map(([c, t], j) => `${esc(nome(c))}: ${(t / 1000).toFixed(3)} s${j ? ` (+${((t - ord[0][1]) / 1000).toFixed(3)})` : ''}`).join('<br>');
-          tr.push({ x: idx.map(X), y: idx.map(Y), mode: 'lines', line: { color: cor(donos[k]), width: 7 }, showlegend: false, hovertemplate: txt + '<extra></extra>' });
+          tr.push({ x: idx.map(X), y: idx.map(Y), mode: 'lines', line: { color: donos[k] ? cor(donos[k]) : css('--muted'), width: 7 }, showlegend: false,
+            hovertemplate: txt + (donos[k] ? '' : '<br><i>empate técnico (menos de 0,02 s)</i>') + '<extra></extra>' });
         }
         // legenda
         L.forEach(x => tr.push({ x: [null], y: [null], mode: 'lines', line: { color: cor(x.c), width: 7 }, name: `${nome(x.c)} (${donos.filter(d => d === x.c).length})` }));
+        const nEmp = donos.filter(d => d == null).length;
+        if (nEmp) tr.push({ x: [null], y: [null], mode: 'lines', line: { color: css('--muted'), width: 7 }, name: `Empate (${nEmp})` });
         // números das curvas, por fora
         const ap = ((D.curvas || {}).apices || []).filter(i => i < n - 1);
         const span = Math.max(Math.max(...tr[0].x) - Math.min(...tr[0].x), Math.max(...tr[0].y) - Math.min(...tr[0].y));
