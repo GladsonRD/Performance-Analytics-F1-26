@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+f1_telemetria/config.json
+f1_telemetria/erro.txt
+f1_telemetria/gravando/
+f1_telemetria/pistas/
+*.f1rec.gz
