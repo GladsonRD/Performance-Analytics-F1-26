@@ -351,25 +351,28 @@ class Painel:
             raiz.after(400, self.abrir_configuracoes)
 
     def renovar_atalho(self):
-        """Troca o atalho antigo "Telemetria F1 26" da Área de Trabalho pelo novo, com o nome e o ícone novos."""
+        """Cria o atalho do programa na pasta e troca o atalho antigo da Área de Trabalho pelo novo."""
         if not sys.platform.startswith("win"):
             return
         q = lambda x: str(x).replace("'", "''")
         exe = sys.executable
         if exe.lower().endswith("python.exe") and os.path.exists(exe[:-10] + "pythonw.exe"):
             exe = exe[:-10] + "pythonw.exe"
+        # cria o atalho "Performance Analytics F1 26" na pasta do programa (para arrastar à Área de Trabalho)
+        # e troca o atalho antigo "Telemetria F1 26" da Área de Trabalho pelo novo
         ps = (
-            "$d=[Environment]::GetFolderPath('Desktop');"
-            "$old=Join-Path $d 'Telemetria F1 26.lnk';"
-            "if(Test-Path $old){"
             "$s=New-Object -ComObject WScript.Shell;"
-            "$a=$s.CreateShortcut((Join-Path $d 'Performance Analytics F1 26.lnk'));"
+            "function Faz($c){$a=$s.CreateShortcut($c);"
             f"$a.TargetPath='{q(exe)}';"
             f"$a.Arguments='\"{q(os.path.join(PASTA, 'painel.pyw'))}\"';"
             f"$a.WorkingDirectory='{q(PASTA)}';"
             f"$a.IconLocation='{q(os.path.join(PASTA, 'icone.ico'))},0';"
             "$a.Description='Grava a telemetria do F1 26 e gera o relatório ao fim da sessão';"
-            "$a.Save(); Remove-Item $old -Force}"
+            "$a.Save()};"
+            f"Faz '{q(os.path.join(PASTA, 'Performance Analytics F1 26.lnk'))}';"
+            "$d=[Environment]::GetFolderPath('Desktop');"
+            "$old=Join-Path $d 'Telemetria F1 26.lnk';"
+            "if(Test-Path $old){Faz (Join-Path $d 'Performance Analytics F1 26.lnk'); Remove-Item $old -Force}"
         )
         try:
             subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
@@ -723,40 +726,72 @@ class Painel:
         try:
             while True:
                 tipo, val = self.fila.get_nowait()
-                if tipo == "log":
-                    self.escrever(val)
-                elif tipo == "estado":
-                    self.mostrar_estado(val)
-                elif tipo == "info":
-                    self.mostrar_info(val)
-                elif tipo == "rel":
-                    self.adicionar_relatorio(val)
-                elif tipo == "novaversao":
-                    self.bt_atualizar.configure(text="Atualizar  ●", fg=AZUL)
-                elif tipo == "fim_atualizar":
-                    self.bt_atualizar.configure(state="normal")
-                elif tipo == "aviso":
-                    titulo, texto, erro = val
-                    self.escrever(texto)
-                    (messagebox.showwarning if erro else messagebox.showinfo)(titulo, texto)
-                elif tipo == "fim":
-                    self.gravador = None
-                    self.botao.configure(text="Iniciar", icone=icone("iniciar"), state="normal", fg=TEXTO)
-                    self.mostrar_estado("Parado")
-                    self.var_detalhe.set("Clique em Iniciar para começar a gravar.")
-                    if self.fechando:
-                        self.raiz.destroy()
-                        return
+                try:
+                    self._tratar(tipo, val)
+                except Exception:  # noqa: BLE001
+                    pass
         except queue.Empty:
             pass
         self.raiz.after(150, self.processar_fila)
 
+    def _tratar(self, tipo, val):
+        if tipo == "log":
+            self.escrever(val)
+        elif tipo == "estado":
+            self.mostrar_estado(val)
+        elif tipo == "info":
+            self.mostrar_info(val)
+        elif tipo == "rel":
+            self.adicionar_relatorio(val)
+        elif tipo == "novaversao":
+            self.bt_atualizar.configure(text="Atualizar  ●", fg=AZUL)
+        elif tipo == "fim_atualizar":
+            self.bt_atualizar.configure(state="normal")
+        elif tipo == "aviso":
+            titulo, texto, erro = val
+            self.escrever(texto)
+            (messagebox.showwarning if erro else messagebox.showinfo)(titulo, texto)
+        elif tipo == "fim":
+            self.gravador = None
+            self.botao.configure(text="Iniciar", icone=icone("iniciar"), state="normal", fg=TEXTO)
+            self.mostrar_estado("Parado")
+            self.var_detalhe.set("Clique em Iniciar para começar a gravar.")
+            if self.fechando:
+                self._sair()
+                return
+
     def ao_fechar(self):
-        if self.gravador:
+        g = self.gravador
+        s = getattr(g, "sessao", None) if g else None
+        pendente = False
+        if s:
+            novos = getattr(s, "pacotes", 0) - getattr(s, "pacotes_no_relatorio", 0)
+            pendente = (not getattr(s, "tentou", True) and getattr(s, "pacotes", 0) > 2000) or \
+                       (getattr(s, "relatorio", None) and novos > 300)
+        if pendente and not self.fechando:
+            # sessão gravada ainda sem relatório: gera antes de fechar (✕ de novo fecha sem esperar)
             self.fechando = True
             self.parar()
-        else:
+            self.var_estado.set("Gerando o relatório antes de fechar...")
+            self.var_detalhe.set("A janela fecha sozinha quando terminar. Clique no ✕ de novo para fechar sem esperar.")
+            self.raiz.after(180000, self._sair)
+            return
+        self._sair()
+
+    def _sair(self):
+        """Fecha de vez: para a gravação e encerra o processo (nada fica rodando em segundo plano)."""
+        try:
+            if self.gravador:
+                self.gravador.parar()
+                if self.thread and not self.fechando:
+                    self.thread.join(timeout=3)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             self.raiz.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(0)
 
 
 def main():
@@ -774,6 +809,8 @@ def main():
                                  "Deu um erro ao abrir. Os detalhes estão em erro.txt, na pasta do programa.")
         except Exception:
             pass
+    # garante que nada (threads, gravação, subprocessos) mantenha o programa vivo depois de fechar
+    os._exit(0)
 
 
 if __name__ == "__main__":
