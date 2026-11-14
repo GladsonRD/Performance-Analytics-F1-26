@@ -242,8 +242,20 @@ class Painel:
         self.var_abrir = tk.BooleanVar(value=self.cfg.get("abrir", True))
         self.var_porta = tk.StringVar(value=str(self.cfg.get("porta", 20777)))
 
-        base = tk.Frame(raiz, bg=CARTAO, highlightbackground=LINHA, highlightthickness=1)
-        base.pack(fill="both", expand=True)
+        # janela com cantos arredondados: o fundo da janela vira transparente e o cartão é desenhado arredondado
+        if self.sem_moldura and (sys.platform.startswith("win") or os.environ.get("PA_ARREDONDAR")):
+            chave = "#010203"
+            raiz.configure(bg=chave)
+            try:
+                raiz.attributes("-transparentcolor", chave)
+            except tk.TclError:
+                pass
+            moldura = Caixa(raiz, fundo=CARTAO, borda=BORDA, raio=18, pad=7, bg_pai=chave)
+            moldura.pack(fill="both", expand=True)
+            base = moldura.dentro
+        else:
+            base = tk.Frame(raiz, bg=CARTAO, highlightbackground=LINHA, highlightthickness=1)
+            base.pack(fill="both", expand=True)
 
         # ---------------------------------------------------------------- barra de título própria
         barra = tk.Frame(base, bg=CARTAO)
@@ -326,6 +338,7 @@ class Painel:
                              padx=10, pady=8, highlightthickness=1, highlightbackground=LINHA)
 
         raiz.protocol("WM_DELETE_WINDOW", self.ao_fechar)
+        threading.Thread(target=self.renovar_atalho, daemon=True).start()
         raiz.after(150, self.processar_fila)
         raiz.after(1500, self.checar_atualizacao)
         self.carregar_relatorios()
@@ -336,6 +349,33 @@ class Painel:
         else:
             self.escrever("Escolha a pasta onde os relatórios vão ficar para começar.")
             raiz.after(400, self.abrir_configuracoes)
+
+    def renovar_atalho(self):
+        """Troca o atalho antigo "Telemetria F1 26" da Área de Trabalho pelo novo, com o nome e o ícone novos."""
+        if not sys.platform.startswith("win"):
+            return
+        q = lambda x: str(x).replace("'", "''")
+        exe = sys.executable
+        if exe.lower().endswith("python.exe") and os.path.exists(exe[:-10] + "pythonw.exe"):
+            exe = exe[:-10] + "pythonw.exe"
+        ps = (
+            "$d=[Environment]::GetFolderPath('Desktop');"
+            "$old=Join-Path $d 'Telemetria F1 26.lnk';"
+            "if(Test-Path $old){"
+            "$s=New-Object -ComObject WScript.Shell;"
+            "$a=$s.CreateShortcut((Join-Path $d 'Performance Analytics F1 26.lnk'));"
+            f"$a.TargetPath='{q(exe)}';"
+            f"$a.Arguments='\"{q(os.path.join(PASTA, 'painel.pyw'))}\"';"
+            f"$a.WorkingDirectory='{q(PASTA)}';"
+            f"$a.IconLocation='{q(os.path.join(PASTA, 'icone.ico'))},0';"
+            "$a.Description='Grava a telemetria do F1 26 e gera o relatório ao fim da sessão';"
+            "$a.Save(); Remove-Item $old -Force}"
+        )
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                           creationflags=0x08000000, timeout=30)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _ajustar_tamanho(self):
         self.raiz.update_idletasks()
