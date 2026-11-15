@@ -605,7 +605,7 @@ if (corrida) {
   desenhos.push(desenhaGap);
 
   // dispersão do ritmo
-  const c3 = card(s, '<h3 style="margin:0 0 6px;font-size:15px">Ritmo de corrida (dispersão)</h3><p class="desc" style="margin-bottom:6px">Cada ponto é uma volta, com a cor do pneu. A caixa mostra onde fica a metade das voltas de cada piloto e o traço no meio é a mediana. Escolha até 8 pilotos.</p>');
+  const c3 = card(s, '<h3 style="margin:0 0 6px;font-size:15px">Ritmo de corrida (dispersão)</h3><p class="desc" style="margin-bottom:6px">Cada ponto é uma volta, com a cor do pneu (losango = volta com tráfego). A caixa mostra onde fica a metade das voltas de cada piloto e o traço no meio é a mediana. Escolha até 8 pilotos.</p>');
   c3.style.marginTop = '14px';
   // compostos usados na corrida (pelo histórico de stints de todos os pilotos)
   const stintsDe = c => (D.classificacao.find(x => String(x.idx) === String(c)) || {}).stints || D.stints[c] || [];
@@ -632,6 +632,12 @@ if (corrida) {
       return Object.assign({ pneu: comp, stint: k, idade: v.n - ini, box: pitV.has(v.n) }, v);
     }).filter(v => (!chkLimpo.checked || (v.n > 1 && !v.box && !scVoltas.has(v.n))) && (!selPneu.value || String(v.pneu) === selPneu.value));
   }
+  // volta com tráfego: a menos de 1 s do carro da frente (média do início e do fim da volta)
+  const trafegoEm = (c, n) => {
+    const v = ((((D.ritmo || {}).trafego || {})[c] || {}).voltas || []).find(x => x.n === n);
+    return v && v.ar === 'sujo' ? v : null;
+  };
+  const fmtSeg2 = (x, casas = 2) => x == null ? '—' : x.toFixed(casas).replace('.', ',');
   function desenhaDisp() {
     const sel = pegaDisp();
     const t = [], cats = [];
@@ -653,9 +659,11 @@ if (corrida) {
         t.push({ type: 'box', x: ys.map(() => i), y: ys, name: nome(c), boxpoints: false, hoverinfo: 'skip',
                  fillcolor: cor + '30', line: { color: g.pneu ? corBox : cor, width: 1.5 }, width: 0.7, showlegend: false });
         t.push({ type: 'scatter', mode: 'markers', x: g.vs.map((v, k) => i + (((k * 0.6180339) % 1) - 0.5) * 0.5), y: ys, showlegend: false,
-                 marker: { size: 9, color: g.vs.map(v => pneu(v.pneu)[2]), line: { color: css('--ink'), width: 1 }, opacity: 0.95 },
-                 customdata: g.vs.map(v => [nome(c), v.n, fmtVolta(v.ms), pneu(v.pneu)[1], v.idade, v.valida ? '' : ' · inválida']),
-                 hovertemplate: '%{customdata[0]} · volta %{customdata[1]}<br><b>%{customdata[2]}</b><br>%{customdata[3]}, %{customdata[4]}ª volta do pneu%{customdata[5]}<extra></extra>' });
+                 marker: { size: g.vs.map(v => trafegoEm(c, v.n) ? 11 : 9), symbol: g.vs.map(v => trafegoEm(c, v.n) ? 'diamond' : 'circle'),
+                           color: g.vs.map(v => pneu(v.pneu)[2]), line: { color: css('--ink'), width: 1 }, opacity: 0.95 },
+                 customdata: g.vs.map(v => { const tr = trafegoEm(c, v.n); return [nome(c), v.n, fmtVolta(v.ms), pneu(v.pneu)[1], v.idade, v.valida ? '' : ' · inválida',
+                   tr ? `<br>com tráfego: ${fmtSeg2(tr.frente, 1)} s atrás de ${esc(nome(tr.carro_frente))}` : '']; }),
+                 hovertemplate: '%{customdata[0]} · volta %{customdata[1]}<br><b>%{customdata[2]}</b><br>%{customdata[3]}, %{customdata[4]}ª volta do pneu%{customdata[5]}%{customdata[6]}<extra></extra>' });
         cats[i].med = med; cats[i].n = ys.length;
       });
     });
@@ -674,7 +682,8 @@ if (corrida) {
   selPneu.onchange = desenhaDisp; selAgr.onchange = desenhaDisp;
   chkLimpo.onchange = desenhaDisp;
   desenhos.push(desenhaDisp);
-  s.appendChild($(`<div class="leg">${[16, 17, 18, 7, 8].map(v => `<span><i style="background:${pneu(v)[2]};border-radius:50%"></i>${pneu(v)[1]}</span>`).join('')}</div>`));
+  s.appendChild($(`<div class="leg">${[16, 17, 18, 7, 8].map(v => `<span><i style="background:${pneu(v)[2]};border-radius:50%"></i>${pneu(v)[1]}</span>`).join('')}
+    ${D.ritmo && D.ritmo.trafego ? `<span style="margin-left:12px">● Pouco ou nenhum tráfego</span><span>◆ Com tráfego (a menos de ${String((D.ritmo.ar_sujo || 1)).replace('.', ',')} s do carro da frente)</span>` : ''}</div>`));
 
   // estratégia
   const s2 = sec('estrategia', 'Estratégia de pneus', 'Stints de cada piloto, na ordem de chegada. O número é a volta da parada. Passe o mouse num stint para ver o desgaste dos pneus no fim dele.', 'corrida');
@@ -699,6 +708,99 @@ if (corrida) {
     });
     return t;
   }, () => baseLayout({ barmode: 'overlay', yaxis: { autorange: 'reversed', gridcolor: 'rgba(0,0,0,0)' }, xaxis: { title: { text: 'volta' }, range: [0, Math.max(...D.classificacao.map(x => x.voltas)) + 0.5] }, margin: { l: 120, r: 16, t: 30, b: 44 } }));
+
+  // ------------------------------------------------------------ ritmo: degradação, paradas e tráfego
+  const R = D.ritmo || {};
+  const lado = x => x > 0 ? `${fmtSeg2(x, 1)} s atrás` : x < 0 ? `${fmtSeg2(-x, 1)} s à frente` : 'empatado';
+  const linhaJog = c => ehJog(c) ? ' style="font-weight:600;background:var(--grid)"' : '';
+  if (R.aviso) {
+    const sx = sec('degradacao', 'Degradação dos pneus', '', 'corrida');
+    sx.appendChild($(`<p class="fraco">${esc(R.aviso)}</p>`));
+  } else if (R.degradacao) {
+    // degradação
+    const sD = sec('degradacao', 'Degradação dos pneus', `Quanto o tempo de volta piora a cada volta de pneu, em cada stint. Já desconta o carro ficando mais leve com o combustível (${fmtSeg2(R.k_comb)} s por kg). Só entram voltas limpas: sem volta 1, box, safety car e erros grandes; com menos de 4 voltas limpas o stint fica sem número.`, 'corrida');
+    const cD = card(sD);
+    const corDeg = d => d == null ? '' : d <= 0.05 ? 'bom' : d >= 0.15 ? 'ruim' : '';
+    const linhasD = ORDEM.flatMap(c => ((R.degradacao[c] || {}).stints || []).map((st, i, arr) => {
+      const deg = st.degr_s;
+      return `<tr${linhaJog(c)}><td>${i === 0 ? esc(nome(c)) : ''}</td><td>${chipPneu(st.pneu)} <span class="fraco">stint ${st.stint}</span></td>
+        <td class="num">${st.de}–${st.ate}</td><td class="num">${st.n_limpas}</td>
+        <td class="num">${st.media_ms ? fmtVolta(st.media_ms) : '—'}</td><td class="num">${st.melhor_ms ? fmtVolta(st.melhor_ms) : '—'}</td>
+        <td class="num">${st.consistencia_s != null ? '± ' + fmtSeg2(st.consistencia_s, 2) : '—'}</td>
+        <td class="num ${corDeg(deg)}" title="${deg != null ? `sem descontar o combustível: ${fmtSeg2(st.bruta_s, 3)} s/volta` : 'poucas voltas limpas'}">${deg != null ? (deg >= 0 ? '+' : '−') + fmtSeg2(Math.abs(deg), 3) + ' s' : '—'}</td></tr>`;
+    }));
+    cD.appendChild($(`<div class="tab-wrap"><table class="compacta"><thead><tr><th>Piloto</th><th>Pneu</th><th class="num">Voltas</th><th class="num">Limpas</th><th class="num">Ritmo médio</th><th class="num">Melhor</th><th class="num">Consistência</th><th class="num">Degradação por volta</th></tr></thead><tbody>${linhasD.join('')}</tbody></table></div>`));
+    cD.appendChild($(`<p class="fraco" style="font-size:12px;margin:6px 0 0">Verde = até 0,05 s por volta (pneu aguentando bem); vermelho = 0,15 s ou mais. Valor negativo = a pista melhorou mais do que o pneu gastou.</p>`));
+
+    const cG = card(sD, '<h3 style="margin:0 0 6px;font-size:15px">Tempo de volta × idade do pneu</h3><p class="desc" style="margin-bottom:6px">Cada ponto é uma volta limpa (cor do pneu); a linha é a tendência do stint, na cor do piloto.</p>');
+    cG.style.marginTop = '14px';
+    const pegaDeg = seletor(cG, { inicial: [J, ORDEM[0], frente, atras], aoMudar: () => desenhaDeg() });
+    const eG = div(cG, 'grafico', 400);
+    function desenhaDeg() {
+      const sel = pegaDeg(), t = [];
+      sel.forEach(c => {
+        const cor = corPiloto(c, sel);
+        ((R.degradacao[c] || {}).stints || []).forEach(st => {
+          const vs = st.voltas.filter(v => v.limpa);
+          if (!vs.length) return;
+          t.push({ type: 'scatter', mode: 'markers', x: vs.map(v => v.idade), y: vs.map(v => v.ms / 1000), name: nome(c), legendgroup: c, showlegend: false,
+                   marker: { size: 8, color: pneu(st.pneu)[2], line: { color: cor, width: 1.5 } },
+                   customdata: vs.map(v => [nome(c), v.n, fmtVolta(v.ms), pneu(st.pneu)[1], v.idade]),
+                   hovertemplate: '%{customdata[0]} · volta %{customdata[1]}<br><b>%{customdata[2]}</b><br>%{customdata[3]}, %{customdata[4]}ª volta do pneu<extra></extra>' });
+          if (st.bruta_s != null) {
+            const x0 = Math.min(...vs.map(v => v.idade)), x1 = Math.max(...vs.map(v => v.idade));
+            t.push({ type: 'scatter', mode: 'lines', x: [x0, x1], y: [st.base_s + st.bruta_s * x0, st.base_s + st.bruta_s * x1], legendgroup: c,
+                     name: `${nome(c)} · ${pneu(st.pneu)[1]}`, line: { color: cor, width: ehJog(c) ? 3 : 2 },
+                     hovertemplate: `${esc(nome(c))} · ${esc(pneu(st.pneu)[1])}<br>${(st.degr_s >= 0 ? '+' : '−') + fmtSeg2(Math.abs(st.degr_s), 3)} s por volta (sem combustível)<extra></extra>` });
+          }
+        });
+      });
+      const ys = t.filter(x => x.mode === 'markers').flatMap(x => x.y);
+      let tick = {};
+      if (ys.length) {
+        const lo = Math.min(...ys), hi = Math.max(...ys), passos = [0.1, 0.2, 0.5, 1, 2, 5];
+        const p = passos.find(x => (hi - lo) / x <= 8) || 5;
+        const vals = []; for (let v = Math.floor(lo / p) * p; v <= hi + p; v += p) vals.push(+v.toFixed(3));
+        tick = { tickvals: vals, ticktext: vals.map(v => fmtVolta(Math.round(v * 1000))), range: [lo - p * 0.4, hi + p * 0.4] };
+      }
+      Plotly.react(eG, t, baseLayout({ yaxis: Object.assign({ title: { text: 'tempo de volta' } }, tick), xaxis: { title: { text: 'volta do pneu' }, dtick: 1 } }), CFG);
+    }
+    desenhos.push(desenhaDeg);
+
+    // pit stops
+    const paradas = R.paradas || {};
+    const qtd = Object.values(paradas).reduce((a, x) => a + x.length, 0);
+    const sP = sec('paradas', 'Pit stops', 'Tempo parado = troca de pneus; pit lane = da entrada à saída do box; tempo perdido = voltas de entrada e de saída comparadas com uma volta normal do piloto (é o que a parada custou de verdade).', 'corrida');
+    const cP = card(sP);
+    if (!qtd) cP.appendChild($('<p class="fraco">Ninguém parou no box nesta corrida (ou a gravação não pegou as paradas).</p>'));
+    else {
+      const posTxt = p => p.pos_antes && p.pos_depois ? `P${p.pos_antes} → P${p.pos_depois}` + (p.pos_depois < p.pos_antes ? ' <span class="bom">▲</span>' : p.pos_depois > p.pos_antes ? ' <span class="ruim">▼</span>' : '') : '—';
+      const todasP = Object.entries(paradas).flatMap(([c, pp]) => pp.map(p => ({ c, p })));
+      const melhorParado = Math.min(...todasP.filter(x => x.p.parado_s).map(x => x.p.parado_s));
+      const linhasP = ORDEM.flatMap(c => (paradas[c] || []).map((p, i) => `<tr${linhaJog(c)}><td>${i === 0 ? esc(nome(c)) : ''}</td><td class="num">${p.volta}</td>
+        <td>${p.drive_through ? '<span class="ruim">drive-through</span>' : p.de != null ? `${chipPneu(p.de)} → ${chipPneu(p.para)}` : '—'}</td>
+        <td class="num${p.parado_s === melhorParado ? ' roxo' : ''}">${p.parado_s ? fmtSeg2(p.parado_s) + ' s' : '—'}</td>
+        <td class="num">${p.pit_lane_s ? fmtSeg2(p.pit_lane_s) + ' s' : '—'}</td>
+        <td class="num">${p.perda_s != null ? fmtSeg2(p.perda_s, 1) + ' s' : '—'}</td><td class="num">${posTxt(p)}</td></tr>`));
+      cP.appendChild($(`<div class="tab-wrap"><table class="compacta"><thead><tr><th>Piloto</th><th class="num">Volta</th><th>Pneus</th><th class="num">Parado</th><th class="num">Pit lane</th><th class="num">Tempo perdido</th><th class="num">Posição</th></tr></thead><tbody>${linhasP.join('')}</tbody></table></div>`));
+
+      // undercut / overcut
+      const meus = (paradas[J] || []).flatMap(p => (p.duelos || []).map(d => ({ c: String(J), p, d })));
+      const lista = meus.length ? meus : todasP.flatMap(({ c, p }) => (p.duelos || []).filter(d => d.tipo === 'undercut').map(d => ({ c, p, d })))
+        .sort((a, b) => Math.abs(b.d.ganho_s) - Math.abs(a.d.ganho_s)).slice(0, 8);
+      const cU = card(sP, `<h3 style="margin:0 0 6px;font-size:15px">Undercut e overcut</h3><p class="desc" style="margin-bottom:6px">${meus.length ? 'Suas paradas contra' : 'Paradas da corrida contra'} rivais que estavam a até 5 s e pararam até 4 voltas antes ou depois. Compara a diferença na volta antes das duas paradas com a diferença depois que os dois pararam.</p>`);
+      cU.style.marginTop = '14px';
+      if (!lista.length) cU.appendChild($('<p class="fraco">Nenhuma disputa de estratégia perto de você.</p>'));
+      else cU.appendChild($(`<ul class="dicas">${lista.map(({ c, p, d }) => {
+        const ganhou = d.ganho_s > 0.3, perdeu = d.ganho_s < -0.3;
+        const tipo = d.tipo === 'undercut' ? 'Undercut' : d.tipo === 'overcut' ? 'Overcut' : 'Mesma volta';
+        const quem = ehJog(c) ? 'Você' : esc(nome(c));
+        return `<li class="${ganhou ? 'bom' : ''}"><span class="tema"><i${perdeu ? ' style="background:var(--ruim)"' : ''}></i>${tipo}</span><span>${quem} (box na volta ${p.volta}) × <b>${esc(nome(d.rival))}</b> (volta ${d.volta_rival}): antes ${lado(d.antes_s)}, depois ${lado(d.depois_s)} —
+          <b class="${ganhou ? 'bom' : perdeu ? 'ruim' : ''}">${ganhou ? 'ganhou' : perdeu ? 'perdeu' : 'ficou igual,'} ${fmtSeg2(Math.abs(d.ganho_s), 1)} s</b>${d.trocou ? (d.depois_s < 0 ? ' e passou à frente' : ' e ficou atrás') : ''}.
+          <span class="nota">Inclui o tempo de cada parada e o ritmo com pneu novo × pneu velho nas voltas entre as duas.</span></span></li>`;
+      }).join('')}</ul>`));
+    }
+  }
 }
 
 // ------------------------------------------------------------ suas voltas

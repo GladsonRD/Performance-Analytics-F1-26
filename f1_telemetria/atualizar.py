@@ -20,7 +20,7 @@ URL_VERSAO = f"https://raw.githubusercontent.com/{REPO}/{RAMO}/f1_telemetria/VER
 URL_ZIP = f"https://github.com/{REPO}/archive/refs/heads/{RAMO}.zip"
 
 # o que é de cada usuário e nunca é sobrescrito
-PRESERVAR = {"config.json", "erro.txt", "gravando", "pistas", "__pycache__"}
+PRESERVAR = {"config.json", "erro.txt", "gravando", "pistas", "__pycache__", "Calendario_F1_2026"}
 
 
 def versao_local():

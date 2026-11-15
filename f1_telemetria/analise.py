@@ -12,6 +12,7 @@ import os
 from collections import defaultdict
 from datetime import datetime
 
+import corrida
 import curvas
 import dicas
 import leitor
@@ -70,6 +71,9 @@ def passada1(caminho):
     ers_carro = defaultdict(dict)       # carro -> volta -> {usado, recup, fim} (J)
     bat_ini_carro = defaultdict(dict)   # carro -> volta -> J no início do trecho cronometrado
     tv_ant_carro = {}
+    comb_carro = defaultdict(dict)      # carro -> volta -> kg de combustível no fim da volta
+    pit_aberto = {}                     # carro -> parada em andamento
+    paradas = defaultdict(list)         # carro -> [{volta, pit_lane_ms, parado_ms}]
     vmax_carro = defaultdict(int)       # velocidade máxima de cada carro com cronômetro rodando
     avisos_carro = defaultdict(int)     # advertências de limite de pista
     setup_jog = None
@@ -88,6 +92,7 @@ def passada1(caminho):
         if status_bruto:
             sc_ = S.ler(status_bruto, c)
             if sc_[iS["fuel_in_tank"]] > 0:
+                comb_carro[c][ant] = round(sc_[iS["fuel_in_tank"]], 2)
                 ers_carro[c][ant] = {"usado": sc_[iS["ers_deployed_this_lap"]], "fim": sc_[iS["ers_store_energy"]],
                                      "recup": sc_[iS["ers_harvested_this_lap_mguk"]] + sc_[iS["ers_harvested_this_lap_mguh"]]}
         if dano_bruto:
@@ -149,6 +154,19 @@ def passada1(caminho):
                     if not (ant is not None and nv == ant + 1):
                         fotografar(c, nv, r[iL["car_position"]])
                 volta_atual[c] = nv
+                # paradas no box: tempo no pit lane e tempo parado
+                ativo = r[iL["pit_lane_timer_active"]]
+                pa_ = pit_aberto.get(c)
+                if ativo:
+                    if pa_ is None:
+                        pa_ = pit_aberto[c] = {"volta": nv, "pit_lane_ms": 0, "parado_ms": 0}
+                    pa_["pit_lane_ms"] = max(pa_["pit_lane_ms"], r[iL["pit_lane_time_in_lane_in_ms"]])
+                    pa_["parado_ms"] = max(pa_["parado_ms"], r[iL["pit_stop_timer_in_ms"]])
+                elif pa_ is not None:
+                    pa_["pit_lane_ms"] = max(pa_["pit_lane_ms"], r[iL["pit_lane_time_in_lane_in_ms"]])
+                    if pa_["pit_lane_ms"] > 3000:
+                        paradas[c] = [x for x in paradas[c] if x["volta"] != pa_["volta"]] + [pa_]
+                    pit_aberto.pop(c)
                 tvc = r[iL["current_lap_time_in_ms"]]
                 pa = tv_ant_carro.get(c)
                 if tvc > 0 and status_bruto and (not pa or pa[0] != nv or pa[1] == 0 or tvc < pa[1] - 500):
@@ -301,7 +319,7 @@ def passada1(caminho):
                 pit_na_volta=pit_na_volta, tipo_volta=tipo_volta, grid=grid, speed_trap=speed_trap,
                 snap=snap, vmax=vmax_sessao, desgaste_carro=desgaste_carro, comb_inicial=comb_inicial,
                 ers_max=ers_max, lim_recup=lim_recup, bat_inicio=bat_inicio, ers_carro=ers_carro,
-                bat_ini_carro=bat_ini_carro, vmax_carro=vmax_carro, avisos_carro=avisos_carro, setup_jog=setup_jog, sc=sc_periodos, duracao_real=ultimo_t - (primeiro_t or 0))
+                bat_ini_carro=bat_ini_carro, comb_carro=comb_carro, paradas=paradas, vmax_carro=vmax_carro, avisos_carro=avisos_carro, setup_jog=setup_jog, sc=sc_periodos, duracao_real=ultimo_t - (primeiro_t or 0))
 
 
 # ---------------------------------------------------------------- passada 2
@@ -974,8 +992,15 @@ def analisar(caminho):
         "energia_carros": energia,
         "setup": p1["setup_jog"],
         "desgaste_trechos": desg_trechos,
+        "paradas": {c: v for c, v in p1["paradas"].items() if c in carros and v},
+        "comb_carro": {c: v for c, v in p1["comb_carro"].items() if c in carros and v},
         "pit_voltas": {c: sorted(p1["pit_na_volta"].get(c, ())) for c in carros if p1["pit_na_volta"].get(c)},
     }
+    if tipo == "corrida":
+        try:
+            D["ritmo"] = corrida.analisar_corrida(D)
+        except Exception as ex:  # noqa: BLE001
+            D["ritmo"] = {"aviso": f"Não foi possível analisar o ritmo: {ex}"}
     try:
         idx, oficial = curvas.apices(sess["pista"], comp, passo, tracos)
         D["curvas"] = {"apices": idx, "oficial": oficial}

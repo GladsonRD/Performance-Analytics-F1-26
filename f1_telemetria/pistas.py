@@ -148,6 +148,62 @@ def mapear(caminho):
 
 
 # ------------------------------------------------------------------ biblioteca acumulada
+# pista normal <-> invertida (mesmo asfalto, sentido contrário)
+INVERTIDAS = {7: 39, 39: 7, 17: 40, 40: 17, 26: 41, 41: 26}
+
+
+def _interp_circ(vals, L, d):
+    """Valor de uma lista de pontos a cada G metros numa volta fechada de comprimento L, na distância d."""
+    n = len(vals)
+    d = d % L
+    i = int(d // G)
+    f = (d - i * G) / G
+    a, b = vals[i % n], vals[(i + 1) % n]
+    return a + (b - a) * f
+
+
+def _inverter(base, comp, tracos, passo):
+    """Monta a pista invertida a partir do mapa da pista no sentido normal.
+    Inverte o sentido (a borda esquerda vira a direita) e acha onde fica a linha de chegada
+    comparando com as voltas gravadas na pista invertida."""
+    n0 = len(base["cx"])
+    L = n0 * G
+    # sentido contrário: o ponto k da invertida é o ponto -k da normal
+    rx = [base["cx"][(-k) % n0] for k in range(n0)]
+    rz = [base["cz"][(-k) % n0] for k in range(n0)]
+    resq = [base["dir"][(-k) % n0] for k in range(n0)]
+    rdir = [base["esq"][(-k) % n0] for k in range(n0)]
+    # deslocamento da linha de chegada: para pontos das voltas gravadas, o ponto mais perto na linha invertida
+    desl = []
+    for t in tracos:
+        if not (t.get("x") and t.get("z")) or t.get("pit"):
+            continue
+        m = min(len(t["x"]), len(t["z"]))
+        for j in range(0, m, max(1, int(50 / passo))):
+            x, z = t["x"][j], t["z"][j]
+            if x is None or z is None:
+                continue
+            k = min(range(n0), key=lambda i: (rx[i] - x) ** 2 + (rz[i] - z) ** 2)
+            if (rx[k] - x) ** 2 + (rz[k] - z) ** 2 > 30 ** 2:
+                continue
+            desl.append(((k * G - j * passo) % L) / L * 2 * math.pi)
+        if len(desl) > 400:
+            break
+    if len(desl) < 20:
+        return None
+    # média circular, depois confere se a maioria concorda
+    ang = math.atan2(sum(math.sin(a) for a in desl), sum(math.cos(a) for a in desl))
+    s = (ang / (2 * math.pi) * L) % L
+    perto = sum(1 for a in desl if abs(((a / (2 * math.pi) * L - s + L / 2) % L) - L / 2) < 40)
+    if perto < 0.7 * len(desl):
+        return None
+    grade = _grade(comp)
+    return {"pista_id": None, "comprimento": comp, "passo": G, "fonte": "mapeada", "invertida_de": base.get("pista_id"),
+            "quando": time.strftime("%Y-%m-%d %H:%M"),
+            "cx": [round(_interp_circ(rx, L, d + s), 2) for d in grade], "cz": [round(_interp_circ(rz, L, d + s), 2) for d in grade],
+            "esq": [round(_interp_circ(resq, L, d + s), 2) for d in grade], "dir": [round(_interp_circ(rdir, L, d + s), 2) for d in grade]}
+
+
 def acumular(pid, comp, tracos, passo):
     """Junta os traçados de uma sessão na biblioteca da pista e devolve a geometria."""
     geo = carregar(pid)
@@ -155,6 +211,18 @@ def acumular(pid, comp, tracos, passo):
         geo = None                                    # outra versão da pista: recomeça
     if geo and geo.get("fonte") == "mapeada":
         return geo
+    # pista invertida (ou normal) sem mapa, mas com o outro sentido mapeado: monta a partir dele
+    par = carregar(INVERTIDAS[pid]) if pid in INVERTIDAS else None
+    if par and par.get("fonte") == "mapeada" and abs(par.get("comprimento", 0) - comp) < 80:
+        try:
+            inv = _inverter(par, comp, tracos, passo)
+        except Exception:  # noqa: BLE001
+            inv = None
+        if inv:
+            inv["pista_id"] = pid
+            inv["nome"] = analise.PISTAS.get(pid, f"Pista {pid}")
+            salvar(pid, inv)
+            return inv
     grade = _grade(comp)
     bons = [t for t in tracos if t.get("x") and t.get("z") and t.get("valida") and not t.get("pit")]
     if not bons:
