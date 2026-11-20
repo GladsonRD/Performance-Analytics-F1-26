@@ -175,7 +175,7 @@ def seu_resumo(D, apices_idx):
             lst = sorted(pat.items(), key=lambda x: -len(x[1]))
             add("Tração", "As traseiras patinam na saída de: " +
                 ", ".join(f"curva {k} ({len(v)} volta(s))" for k, v in lst[:6]) +
-                ". Acelere de forma mais progressiva nessas saídas ou reduza o diferencial ao acelerar (on-throttle).")
+                ". Acelere de forma mais progressiva nessas saídas; no acerto, barra traseira mais macia ou pneus traseiros um pouco mais vazios dão mais tração.")
 
     # ------------------------------------------- equilíbrio (sub/sobreesterço) por fase da curva
     fases = {}
@@ -213,8 +213,7 @@ def seu_resumo(D, apices_idx):
     st = D.get("setup") or {}
     # limites do acerto no jogo: (mínimo, máximo)
     LIM = {"front_wing": (0, 50), "rear_wing": (0, 50), "front_anti_roll_bar": (1, 21), "rear_anti_roll_bar": (1, 21),
-           "front_camber": (-3.5, -2.5), "on_throttle": (10, 100), "off_throttle": (10, 100), "brake_bias": (50, 70),
-           "engine_braking": (0, 100)}
+           "front_camber": (-3.5, -2.5), "on_throttle": (10, 100), "off_throttle": (10, 100), "brake_bias": (50, 70)}
 
     def opc(campo, sentido, texto):
         """Sugestão de acerto, só se ainda dá para mexer nesse sentido (+1 aumenta, −1 diminui)."""
@@ -243,12 +242,11 @@ def seu_resumo(D, apices_idx):
                           opc("front_camber", -1, "mais cambagem negativa na frente")))
         if sob_sai:
             add("Equilíbrio", f"Sobreesterço na saída {lista_curvas(sob_sai).replace('na ', 'da ', 1).replace('nas ', 'das ', 1)}: a traseira escorrega ao acelerar." +
-                sugestoes(opc("on_throttle", -1, "diferencial ao acelerar (on-throttle) mais baixo"), opc("rear_anti_roll_bar", -1, "barra traseira mais macia"),
+                sugestoes(opc("rear_anti_roll_bar", -1, "barra traseira mais macia"), opc("on_throttle", 1, "diferencial ao acelerar (on-throttle) mais alto, para mais tração"),
                           opc("rear_wing", 1, "+1 na asa traseira")))
         if sob_ent:
             add("Equilíbrio", f"Sobreesterço na entrada {lista_curvas(sob_ent).replace('na ', 'da ', 1).replace('nas ', 'das ', 1)}: a traseira solta na freada." +
-                sugestoes(opc("brake_bias", 1, "balanço de freio mais para a frente"), opc("off_throttle", 1, "diferencial sem acelerar (off-throttle) mais alto"),
-                          opc("engine_braking", -1, "freio-motor mais baixo")))
+                sugestoes(opc("brake_bias", 1, "balanço de freio mais para a frente"), opc("off_throttle", 1, "diferencial sem acelerar (off-throttle) mais alto")))
         if not (sub or sob_sai or sob_ent):
             add("Equilíbrio", "Carro equilibrado: nenhuma curva com sub ou sobreesterço claro.", "bom")
         itens[-1]["nota"] = "Estimativa pelos ângulos de deriva das rodas (pacote 13), só do seu carro."

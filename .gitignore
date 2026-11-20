@@ -10,3 +10,6 @@ f1_telemetria/pistas/
 # setups e calendário pessoais (conteúdo pago): nunca vai para o GitHub
 Calendario_F1_2026/
 **/Calendario_F1_2026/
+f1_telemetria/perfil_piloto.json
+perfil_piloto.json
+f1_telemetria/setups_ref.py

@@ -43,6 +43,7 @@ def passada1(caminho):
     pilotos = {}
     n_ativos = 0
     jogador = 0
+    cont_jog = {}
     historico = {}           # carro -> objeto PacketSessionHistoryData mais recente
     final = None             # PacketFinalClassificationData
     eventos = []
@@ -128,6 +129,9 @@ def passada1(caminho):
         ultimo_t = max(ultimo_t, t)
         jog = cab[10]
         if jog < 22:
+            # o índice do jogador pode mudar no fim da sessão (tela de resultado, espectador):
+            # vale o que mais apareceu durante a gravação
+            cont_jog[jog] = cont_jog.get(jog, 0) + 1
             jogador = jog
 
         if pid == 2:  # lap data
@@ -314,7 +318,7 @@ def passada1(caminho):
     if sc_periodos and sc_periodos[-1][2] is None:
         sc_periodos[-1][2] = ultimo_t
 
-    return dict(sess=sess, pilotos=pilotos, n_ativos=n_ativos, jogador=jogador, historico=historico,
+    return dict(sess=sess, pilotos=pilotos, n_ativos=n_ativos, jogador=max(cont_jog, key=cont_jog.get) if cont_jog else jogador, historico=historico,
                 final=final, eventos=eventos, flashbacks=flashbacks, conclusoes=conclusoes,
                 pit_na_volta=pit_na_volta, tipo_volta=tipo_volta, grid=grid, speed_trap=speed_trap,
                 snap=snap, vmax=vmax_sessao, desgaste_carro=desgaste_carro, comb_inicial=comb_inicial,
@@ -714,7 +718,9 @@ def desgaste_por_trecho(caminho, comprimento, carros):
         if pid == 2:
             for c in carros:
                 r = L.ler(dados, c)
-                lap[c] = (r[iL["current_lap_num"]], r[iL["lap_distance"]], r[iL["pit_status"]] == 0 and r[iL["driver_status"]] in (1, 4))
+                # online, depois do box o jogo deixa os rivais marcados como "volta de entrada" (2) até o fim:
+                # vale qualquer status na pista, o que tira o box é o pit_status
+                lap[c] = (r[iL["current_lap_num"]], r[iL["lap_distance"]], r[iL["pit_status"]] == 0 and r[iL["driver_status"]] in (1, 2, 3, 4))
         elif pid == 7:
             for c in carros:
                 r = S.ler(dados, c)
@@ -728,12 +734,20 @@ def desgaste_por_trecho(caminho, comprimento, carros):
                 w = [r[iD[f"tyres_wear{k}"]] for k in range(4)]
                 volta, dist, ok = lap[c]
                 ant = ult.get(c)
-                ult[c] = (volta, dist, w)
+                # o desgaste dos rivais chega pela rede e oscila um pouco para cima e para baixo:
+                # guarda o maior valor já visto de cada pneu e só conta o que passar dele
+                topo = ant[2] if ant else w
+                if any(x < t_ - 5 for x, t_ in zip(w, topo)):
+                    topo = w          # caiu muito: troca de pneu (ou flashback), recomeça
+                    ult[c] = (volta, dist, w)
+                    continue
+                novo = [max(x, t_) for x, t_ in zip(w, topo)]
+                ult[c] = (volta, dist, novo)
                 if volta <= 1 or not ok or not ant or ant[0] != volta or dist <= ant[1] or dist - ant[1] > 150 or ant[1] < 0:
                     continue
-                dw = [b - a for a, b in zip(ant[2], w)]
-                if any(x < 0 or x > 3 for x in dw):
-                    continue          # troca de pneu, flashback ou leitura estranha
+                dw = [n_ - t_ for n_, t_ in zip(novo, topo)]
+                if any(x > 3 for x in dw):
+                    continue          # salto estranho
                 g = out.setdefault(c, {}).setdefault(comp[c], {"w": [[0.0] * nb for _ in range(4)], "m": [0.0] * nb, "vis": vis.get(c)})
                 a, b = ant[1], dist
                 k0, k1 = int(a // TRECHO_DESG), min(nb - 1, int(b // TRECHO_DESG))
@@ -911,6 +925,11 @@ def analisar(caminho):
             e["ers_recuperado"] = round(e.pop("ers_recuperado_j") / cap * 100, 1)
         if e["n"] in p1["bat_inicio"]:
             e["ers_inicio"] = round(p1["bat_inicio"][e["n"]] / cap * 100, 1)
+        # a bateria no início da volta é a do fim da volta anterior (a leitura no meio da volta pode
+        # pegar um flashback ou um pacote atrasado)
+        prev = next((x for x in jv if x["n"] == e["n"] - 1), None)
+        if prev and prev.get("ers_bateria") is not None:
+            e["ers_inicio"] = prev["ers_bateria"]
         if e.get("combustivel") is not None:
             if ant_comb is not None:
                 e["comb_gasto"] = round(ant_comb - e["combustivel"], 2)
@@ -936,9 +955,15 @@ def analisar(caminho):
             x = {"usado": round(e["usado"] / cap * 100, 1), "fim": round(e["fim"] / cap * 100, 1)}
             if "recup" in e:
                 x["recup"] = round(e["recup"] / cap * 100, 1)
+            # online o jogo às vezes não manda a energia do rival: volta com 0 usado e 0 recuperado = sem dado
+            if x["usado"] < 1 and x.get("recup", 0) < 1:
+                continue
             if nv in p1["bat_ini_carro"].get(c, {}):
                 x["ini"] = round(p1["bat_ini_carro"][c][nv] / cap * 100, 1)
             lin[nv] = x
+        for nv, x in lin.items():
+            if nv - 1 in lin:
+                x["ini"] = lin[nv - 1]["fim"]
         if lin:
             energia[c] = lin
 
@@ -996,6 +1021,11 @@ def analisar(caminho):
         "comb_carro": {c: v for c, v in p1["comb_carro"].items() if c in carros and v},
         "pit_voltas": {c: sorted(p1["pit_na_volta"].get(c, ())) for c in carros if p1["pit_na_volta"].get(c)},
     }
+    try:
+        import setups_ref
+        D["setup_ref"] = setups_ref.carregar(sess["pista"]) if D.get("setup") else None
+    except Exception:  # noqa: BLE001
+        D["setup_ref"] = None
     if tipo == "corrida":
         try:
             D["ritmo"] = corrida.analisar_corrida(D)
@@ -1014,6 +1044,11 @@ def analisar(caminho):
         except Exception:
             D["pista_geo"] = None
         D["seu_resumo"] = dicas.seu_resumo(D, idx)
+        try:
+            import perfil
+            D["estilo"] = perfil.montar(D, idx)
+        except Exception as ex:  # noqa: BLE001
+            D["estilo"] = {"aviso": f"Não foi possível montar o perfil: {ex}"}
     except Exception as ex:  # o resumo nunca pode impedir o relatório
         D["seu_resumo"] = {"aviso": f"Não foi possível montar as dicas: {ex}"}
     D["resumo_sessao"] = dicas.resumo_sessao(D)
