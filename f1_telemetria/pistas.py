@@ -6,6 +6,8 @@ arquivo em pistas/<id da pista>.json com a linha central e as duas bordas, de um
 
   - "mapeada": você faz uma volta colado na borda esquerda e outra colado na direita (de
     preferência no contra o relógio) e manda o painel mapear essa gravação. É o mais preciso.
+  - pistas_base/: mapas já feitos ("mapeada") que vêm com o programa; valem quando você não
+    mapeou a pista, mesmo que já tenha um mapa acumulado dela.
   - "acumulada": cada relatório gerado junta os traçados de todos os pilotos da sessão; a borda é
     até onde os carros já passaram, com folga. Melhora sozinha com o tempo.
 
@@ -22,6 +24,7 @@ import time
 import analise
 
 PASTA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pistas")
+PASTA_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pistas_base")   # mapas que vêm com o programa
 G = 5.0              # metros entre pontos guardados
 MEIO_CARRO = 1.0     # do centro do carro até a lateral (a borda fica além disso)
 FOLGA = 0.8          # folga extra na borda acumulada
@@ -32,12 +35,25 @@ def _arquivo(pid):
     return os.path.join(PASTA, f"{pid}.json")
 
 
-def carregar(pid):
+def _ler(caminho):
     try:
-        with open(_arquivo(pid), encoding="utf-8") as f:
+        with open(caminho, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
+
+
+def carregar(pid):
+    """Mapa da pista: o seu (pistas/) se for mapeado; senão o mapeado que vem com o programa
+    (pistas_base/); senão o acumulado que você tiver."""
+    local = _ler(_arquivo(pid))
+    if local and local.get("fonte") == "mapeada":
+        return local
+    base = _ler(os.path.join(PASTA_BASE, f"{pid}.json"))
+    if base and base.get("fonte") == "mapeada" and base.get("cx") and (
+            not local or abs(base.get("comprimento", 0) - local.get("comprimento", 0)) <= 30):
+        return base
+    return local
 
 
 def salvar(pid, geo):

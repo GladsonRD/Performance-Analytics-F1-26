@@ -133,6 +133,11 @@ class Caixa(tk.Canvas):
         h = self.dentro.winfo_reqheight() + 2 * self.pad
         if int(self.cget("height")) != h:
             self.configure(height=h)
+            # avisa a janela: a caixa cresceu depois de a janela ter calculado a altura (cortava o rodapé)
+            try:
+                self.winfo_toplevel().event_generate("<<CaixaMudou>>", when="tail")
+            except tk.TclError:
+                pass
         if repetir:   # o conteúdo muda de tamanho sem avisar quando ainda está fora da área visível
             self.after(250, lambda: self._ajustar_altura(repetir=True))
 
@@ -180,6 +185,9 @@ class BotaoR(tk.Canvas):
         f_txt = tkfont.Font(family=FONTE, size=11, weight="bold" if self.negrito else "normal")
         lt = f_txt.measure(self.texto)
         li = 0
+        if self.ico and not self.texto:      # só ícone (engrenagem): centro exato do botão
+            self.create_text(w / 2, h / 2, text=self.ico, font=fonte_icone(11), fill=cor, anchor="center")
+            return
         if self.ico:
             f_ico = tkfont.Font(family=fonte_icone(11)[0], size=11)
             li = f_ico.measure(self.ico) + 8
@@ -344,6 +352,7 @@ class Painel:
         raiz.after(1500, self.checar_atualizacao)
         self.carregar_relatorios()
         raiz.after(50, self._ajustar_tamanho)
+        raiz.bind("<<CaixaMudou>>", lambda _e: raiz.after_idle(self._ajustar_tamanho))
 
         if self.var_pasta.get():
             raiz.after(300, self.iniciar)
@@ -509,6 +518,8 @@ class Painel:
     def carregar_relatorios(self):
         p = self.var_pasta.get()
         arqs = glob.glob(os.path.join(p, "*", "*.html")) if p else []
+        # a pasta do programa pode estar dentro da pasta dos relatórios: o modelo não é relatório
+        arqs = [a for a in arqs if os.path.normcase(os.path.dirname(os.path.abspath(a))) != os.path.normcase(PASTA)]
         arqs.sort(key=os.path.getmtime, reverse=True)
         self.relatorios = [os.path.normpath(a) for a in arqs]
         self.desenhar_relatorios()

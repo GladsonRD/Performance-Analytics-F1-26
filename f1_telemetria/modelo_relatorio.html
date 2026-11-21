@@ -52,6 +52,8 @@ h2 { font-size: 19px; margin: 0 0 4px; }
 .tile .val { font-size: 28px; font-weight: 600; margin-top: 2px; letter-spacing: -0.01em; }
 .tile .det { font-size: 13px; color: var(--muted); margin-top: 2px; }
 .grade2 > * { min-width: 0; }
+.ers-lados { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 18px; }
+.ers-lados > * { min-width: 0; }
 .grade2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 14px; }
 .grafico { width: 100%; min-height: 300px; }
 .tab-wrap { overflow-x: auto; }
@@ -64,6 +66,24 @@ td.num, th.num { text-align: right; }
 .roxo { color: var(--roxo); font-weight: 600; }
 .verde { color: var(--verde); font-weight: 600; }
 .ruim { color: var(--ruim); }
+td.cmp-ck, th.cmp-ck { width: 22px; padding-right: 0; text-align: center; }
+td.cmp-ck input { cursor: pointer; accent-color: var(--s1); }
+tr.cmp-sel td { background: color-mix(in srgb, var(--s1) 9%, transparent); }
+.cmp-ctl { flex-wrap: wrap; gap: 6px; }
+.stint-pil { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 8px 0 4px; font-size: 13px; }
+.stint-pil .stint-1 { display: inline-flex; align-items: center; gap: 6px; flex-direction: row; }
+.stint-pil select { max-width: 240px; }
+.cmp-ctl .chip-c { cursor: pointer; }
+.cmp-ctl .cmp-x { margin-left: 6px; font-weight: 600; opacity: .6; }
+.cmp-ctl .cmp-x:hover { opacity: 1; }
+.cmp-add { flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+table.cmp { width: auto; min-width: min(100%, 560px); }
+table.cmp th { text-align: left; font-weight: 500; white-space: nowrap; }
+table.cmp tbody th { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--ink2); padding-right: 28px; }
+table.cmp td.num { padding-left: 28px; }
+table.cmp td { white-space: nowrap; }
+table.cmp .cmp-d { font-size: 12px; margin-left: 6px; }
+table.cmp tr.cmp-grupo td { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink3, var(--ink2)); padding-top: 12px; }
 .bom { color: var(--bom); }
 .fraco { color: var(--muted); }
 .pneu { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
@@ -455,9 +475,10 @@ function resumoMeu(s) {
   c.querySelectorAll('[data-curva]').forEach(b => b.onclick = () => window.irParaCurva && window.irParaCurva(+b.dataset.curva, R));
   // pneus: temperatura x janela de aderência, por composto usado (todas as voltas, menos box e largada)
   const PC = R.pneus_comp || [];
+  const CUR = R.pneus_base === 'superficie_curva';
   if (PC.length) {
     const cp = card(s, `<h3 style="margin:0 0 2px;font-size:15px">Temperatura dos pneus por composto</h3>
-      <p class="desc" style="margin:0 0 8px">Temperatura da superfície em todas as suas voltas com cada pneu (sem as voltas de box${M.tipo === 'corrida' ? ' e a largada' : ''}). Abaixo da janela o pneu tem menos aderência e tração.</p>`);
+      <p class="desc" style="margin:0 0 8px">Temperatura da <b>superfície</b> do pneu${CUR ? ' <b>nas curvas e freadas</b>, onde o pneu trabalha (nas retas ela esfria e puxaria a média para baixo)' : ' na volta inteira'}, em todas as suas voltas com cada pneu (sem as voltas de box${M.tipo === 'corrida' ? ' e a largada' : ''}). Abaixo da janela o pneu tem menos aderência e tração.${CUR ? ' A máxima é o pico da volta toda.' : ' <b>Relatório antigo:</b> conta também as retas, então a média fica abaixo do real; gere de novo para ver só as curvas.'}</p>`);
     cp.style.marginTop = '12px';
     const abas = $(`<div class="chips-comp"></div>`); cp.appendChild(abas);
     const corpo = $('<div></div>'); cp.appendChild(corpo);
@@ -476,8 +497,8 @@ function resumoMeu(s) {
         <tbody>${rodas.map(r => `<tr><td>${r.roda}</td>${temAb ? `<td class="num ${corT(r.abertura)}">${r.abertura} °C</td>` : ''}<td class="num ${corT(r.media)}">${r.media} °C</td>
           <td class="num ${corT(r.min)}">${r.min} °C</td>
           <td class="num ${corT(r.max)}">${r.max} °C <span class="fraco">(V${r.volta_max}${r.curva_max ? ', curva ' + r.curva_max : ''})</span></td>
-          <td class="num ${r.abaixo >= 30 ? 'frio' : ''}">${r.abaixo}%</td><td class="num">${r.dentro}%</td><td class="num ${r.acima >= 20 ? 'ruim' : ''}">${r.acima}%</td>
-          <td class="num">${r.aderencia_media.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
+          <td class="num ${(r.frio ?? r.abaixo >= 30) ? 'frio' : ''}">${r.abaixo}%</td><td class="num">${r.dentro}%</td><td class="num ${r.acima >= 20 ? 'ruim' : ''}">${r.acima}%</td>
+          <td class="num ${r.aderencia_media < 98 ? 'frio' : ''}">${r.aderencia_media.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
         <details class="tabela-ad"><summary>Tabela de aderência por temperatura (todos os compostos)</summary><div class="tab-scroll">${tabelaAderencia(P.composto)}</div></details>`;
     };
     PC.forEach((g, k) => { const b = $(`<button class="chip-c" style="--c:${g.visual && PNEUS[g.visual] ? PNEUS[g.visual][2] : 'var(--ink2)'}">${esc(nomeComp(g))}</button>`); b.onclick = () => mostra(k); abas.appendChild(b); });
@@ -507,7 +528,7 @@ function resumoMeu(s) {
           }
           i = j + 1;
         }
-        return [tr, baseLayout({ yaxis: { title: { text: '°C (superfície, média da volta)' } }, xaxis: { title: { text: 'volta' }, dtick: 1 }, shapes, annotations: anots, hovermode: 'x unified' })];
+        return [tr, baseLayout({ yaxis: { title: { text: CUR ? '°C (superfície em curva)' : '°C (superfície, média da volta)' } }, xaxis: { title: { text: 'volta' }, dtick: 1 }, shapes, annotations: anots, hovermode: 'x unified' })];
       })(); Plotly.react(el, tr_, lay_, CFG); });
       cp.appendChild($(`<div class="fraco" style="font-size:12px">Faixa verde = janela de aderência acima de 99,5% do composto; linha pontilhada = temperatura ideal. Losango = volta de box.</div>`));
     }
@@ -645,7 +666,8 @@ if (corrida) {
   desenhos.push(desenhaGap);
 
   // dispersão do ritmo
-  const c3 = card(s, '<h3 style="margin:0 0 6px;font-size:15px">Ritmo de corrida (dispersão)</h3><p class="desc" style="margin-bottom:6px">Cada ponto é uma volta, com a cor do pneu (losango = volta com tráfego). A caixa mostra onde fica a metade das voltas de cada piloto e o traço no meio é a mediana. Escolha até 8 pilotos.</p>');
+  const R0 = D.ritmo || {};
+  const c3 = card(s, '<h3 style="margin:0 0 6px;font-size:15px">Ritmo de corrida (dispersão)</h3><p class="desc" style="margin-bottom:6px">Cada ponto é uma volta, com a cor do pneu (losango = volta com tráfego). A caixa mostra onde fica a metade das voltas de cada piloto e o traço no meio é a mediana. Escolha até 8 pilotos e, para cada um, o stint que quer comparar.</p>');
   c3.style.marginTop = '14px';
   // compostos usados na corrida (pelo histórico de stints de todos os pilotos)
   const stintsDe = c => (D.classificacao.find(x => String(x.idx) === String(c)) || {}).stints || D.stints[c] || [];
@@ -653,25 +675,51 @@ if (corrida) {
   const ctl3 = $(`<div class="linha-ctl">
     <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" checked> Ignorar volta 1, voltas de box e safety car</label>
     <label>Pneu<select class="sel-pneu"><option value="">todos</option>${usados.map(v => `<option value="${v}">${PNEUS[v][1]}</option>`).join('')}</select></label>
-    <label>Mostrar<select class="sel-agr"><option value="stint">por stint</option><option value="piloto">todos os stints juntos</option>${
-      Array.from({ length: Math.max(0, ...Object.keys(D.voltas).map(c => stintsDe(c).length)) }, (_, k) => k).filter(k => Object.keys(D.voltas).some(c => stintsDe(c).length > 1)).map(k => `<option value="s${k}">só o stint ${k + 1}</option>`).join('')}</select></label></div>`);
+    <label>Mostrar<select class="sel-agr"><option value="stint">cada stint separado</option><option value="piloto">todos os stints juntos</option></select></label></div>`);
   c3.appendChild(ctl3);
   const chkLimpo = ctl3.querySelector('input'), selPneu = ctl3.querySelector('.sel-pneu'), selAgr = ctl3.querySelector('.sel-agr');
   const vencedor = ORDEM[0];
   const pegaDisp = seletor(c3, { inicial: [J, vencedor, frente, atras], aoMudar: () => desenhaDisp() });
+  // stint de cada piloto: cada um escolhe o seu (o stint 2 de um não é o stint 2 do outro)
+  const boxStint = $(`<div class="stint-pil"></div>`); c3.appendChild(boxStint);
+  const escolha = {};   // carro -> índice do stint ('' = todos)
   const e3 = div(c3, 'grafico', 420);
-  function voltasDe(c) {
+  const resumoDisp = $(`<div class="tab-wrap" style="margin-top:10px"></div>`); c3.appendChild(resumoDisp);
+  // todas as voltas do piloto já com pneu, stint e idade (sem filtros)
+  function voltasStint(c) {
     const vs = D.voltas[c] || [];
     const st = stintsDe(c);
-    // voltas com passagem pelo box: vêm da telemetria (entrada e saída do pit); sem ela, estima pelo fim do stint
     const pitV = new Set((D.pit_voltas || {})[c] || []);
     if (!pitV.size) st.forEach((x, i) => { if (i < st.length - 1) { pitV.add(x.fim + 1); pitV.add(x.fim + 2); } });
     return vs.map(v => {
-      // o histórico do jogo fecha o stint na última volta completa antes de entrar no box: a volta de entrada ainda é do pneu antigo
       let ini = 0, comp = null, k = 0;
       for (; k < st.length; k++) { const x = st[k]; if (v.n <= (x.fim === 255 ? 999 : x.fim + 1)) { comp = x.pneu; break; } ini = x.fim + 1; }
       return Object.assign({ pneu: comp, stint: k, idade: v.n - ini, box: pitV.has(v.n) }, v);
-    }).filter(v => (!chkLimpo.checked || (v.n > 1 && !v.box && !scVoltas.has(v.n))) && (!selPneu.value || String(v.pneu) === selPneu.value));
+    });
+  }
+  // lista dos stints do piloto: pneu e voltas (ex.: Stint 2 · Duro · V7–29)
+  function listaStints(c) {
+    const por = {};
+    voltasStint(c).forEach(v => { const x = por[v.stint] || (por[v.stint] = { k: v.stint, pneu: v.pneu, de: v.n, ate: v.n }); x.de = Math.min(x.de, v.n); x.ate = Math.max(x.ate, v.n); });
+    return Object.values(por).sort((a, b) => a.k - b.k);
+  }
+  const rotStint = x => `Stint ${x.k + 1} · ${(PNEUS[x.pneu] || ['', '?'])[1]} · V${x.de}–${x.ate}`;
+  function desenhaStintPil(sel) {
+    boxStint.innerHTML = `<span class="fraco">Stint de cada piloto:</span>`;
+    sel.forEach(c => {
+      const ls = listaStints(c);
+      const sp = $(`<label class="stint-1"><span class="ponto" style="background:${corPiloto(c, sel)};margin:0"></span>${esc(nome(c))}
+        <select><option value="">todos</option>${ls.map(x => `<option value="${x.k}">${esc(rotStint(x))}</option>`).join('')}</select></label>`);
+      const se = sp.querySelector('select');
+      se.value = escolha[c] ?? '';
+      se.onchange = () => { escolha[c] = se.value; desenhaDisp(); };
+      boxStint.appendChild(sp);
+    });
+  }
+  function voltasDe(c) {
+    // o histórico do jogo fecha o stint na última volta completa antes de entrar no box: a volta de entrada ainda é do pneu antigo
+    const k = escolha[c];
+    return voltasStint(c).filter(v => k == null || k === '' || v.stint === +k).filter(v => (!chkLimpo.checked || (v.n > 1 && !v.box && !scVoltas.has(v.n))) && (!selPneu.value || String(v.pneu) === selPneu.value));
   }
   // volta com tráfego: a menos de 1 s do carro da frente (média do início e do fim da volta)
   const trafegoEm = (c, n) => {
@@ -681,13 +729,15 @@ if (corrida) {
   const fmtSeg2 = (x, casas = 2) => x == null ? '—' : x.toFixed(casas).replace('.', ',');
   function desenhaDisp() {
     const sel = pegaDisp();
+    desenhaStintPil(sel);
     const t = [], cats = [];
     let todos = [];
     sel.forEach(c => {
       const vs = voltasDe(c);
-      const so = /^s\d+$/.test(selAgr.value) ? +selAgr.value.slice(1) : null;
-      const grupos = selAgr.value === 'stint' || so != null
-        ? [...new Set(vs.map(v => v.stint))].filter(k => so == null || k === so).map(k => ({ vs: vs.filter(v => v.stint === k), rot: `Stint ${k + 1} · ${(PNEUS[vs.find(v => v.stint === k).pneu] || ['', '?'])[1]}`, pneu: vs.find(v => v.stint === k).pneu }))
+      const ls = listaStints(c);
+      const umStint = escolha[c] != null && escolha[c] !== '';
+      const grupos = selAgr.value === 'stint' || umStint
+        ? [...new Set(vs.map(v => v.stint))].map(k => { const x = ls.find(y => y.k === k); return { vs: vs.filter(v => v.stint === k), rot: rotStint(x), pneu: x.pneu, st: x }; })
         : [{ vs, rot: '', pneu: null }];
       grupos.forEach(g => {
         if (!g.vs.length) return;
@@ -706,7 +756,10 @@ if (corrida) {
                  customdata: g.vs.map(v => { const tr = trafegoEm(c, v.n); return [nome(c), v.n, fmtVolta(v.ms), pneu(v.pneu)[1], v.idade, v.valida ? '' : ' · inválida',
                    tr ? `<br>com tráfego: ${fmtSeg2(tr.frente, 1)} s atrás de ${esc(nome(tr.carro_frente))}` : '']; }),
                  hovertemplate: '%{customdata[0]} · volta %{customdata[1]}<br><b>%{customdata[2]}</b><br>%{customdata[3]}, %{customdata[4]}ª volta do pneu%{customdata[5]}%{customdata[6]}<extra></extra>' });
-        cats[i].med = med; cats[i].n = ys.length;
+        const media = ys.reduce((a, b) => a + b, 0) / ys.length;
+        Object.assign(cats[i], { med, n: ys.length, media, melhor: ord[0], pneu: g.pneu, st: g.st,
+          dp: ys.length > 1 ? Math.sqrt(ys.reduce((a, y) => a + (y - media) ** 2, 0) / (ys.length - 1)) : null,
+          traf: g.vs.filter(v => trafegoEm(c, v.n)).length });
       });
     });
     let tick = {};
@@ -720,6 +773,31 @@ if (corrida) {
       `<br><span style="font-size:11px">mediana ${fmtVolta(Math.round(x.med * 1000))} · ${x.n} v.</span>`;
     Plotly.react(e3, t, baseLayout({ yaxis: Object.assign({ title: { text: 'tempo de volta' } }, tick),
       xaxis: { tickvals: cats.map((_, i) => i), ticktext: cats.map(rot), range: [-0.6, Math.max(1, cats.length) - 0.4], showgrid: false } }), CFG);
+    desenhaResumoDisp(cats);
+  }
+  // resumo de cada caixa do gráfico; a primeira linha é a referência da coluna "vs. 1ª"
+  function degDe(c, st) {
+    if (!st || !R0.degradacao) return null;
+    const ls = (R0.degradacao[c] || {}).stints || [];
+    let melhor = null, sob = 0;
+    ls.forEach(x => { const o = Math.min(x.ate, st.ate) - Math.max(x.de, st.de) + 1; if (o > sob && x.pneu === st.pneu) { sob = o; melhor = x; } });
+    return melhor;
+  }
+  function desenhaResumoDisp(cats) {
+    if (!cats.length) { resumoDisp.innerHTML = ''; return; }
+    const ref = cats[0];
+    const dif = x => { const d = x.med - ref.med; return Math.abs(d) < 0.0005 ? '<span class="fraco">ref.</span>' : `<span class="${d < 0 ? 'bom' : 'ruim'}">${d > 0 ? '+' : '−'}${fmtSeg2(Math.abs(d), 3)}</span>`; };
+    const linhas = cats.map((x, i) => {
+      const dg = degDe(x.c, x.st), d = dg ? dg.degr_s : null;
+      return `<tr${linhaJog(x.c)}><td>${esc(nome(x.c))}</td><td>${x.st ? `${chipPneu(x.pneu)} <span class="fraco">stint ${x.st.k + 1} · V${x.st.de}–${x.st.ate}</span>` : '<span class="fraco">todos os stints</span>'}</td>
+        <td class="num">${x.n}</td><td class="num">${fmtVolta(Math.round(x.med * 1000))}</td><td class="num">${i ? dif(x) : '<span class="fraco">ref.</span>'}</td>
+        <td class="num">${fmtVolta(Math.round(x.media * 1000))}</td><td class="num">${fmtVolta(Math.round(x.melhor * 1000))}</td>
+        <td class="num">${x.dp != null ? '± ' + fmtSeg2(x.dp, 2) : '—'}</td>
+        <td class="num ${d == null ? '' : d <= 0.05 ? 'bom' : d >= 0.15 ? 'ruim' : ''}">${d != null ? (d >= 0 ? '+' : '−') + fmtSeg2(Math.abs(d), 3) + ' s' : '—'}</td>
+        <td class="num">${x.traf || '—'}</td></tr>`;
+    });
+    resumoDisp.innerHTML = `<table class="compacta"><thead><tr><th>Piloto</th><th>Stint</th><th class="num">Voltas</th><th class="num">Mediana</th><th class="num">vs. 1ª linha</th><th class="num">Média</th><th class="num">Melhor</th><th class="num" title="desvio padrão dos tempos">Consistência</th><th class="num" title="já descontando o combustível">Degradação/volta</th><th class="num">Com tráfego</th></tr></thead><tbody>${linhas.join('')}</tbody></table>
+      <p class="fraco" style="font-size:12px;margin:6px 0 0">Só entram as voltas mostradas no gráfico (com os filtros acima). Degradação por volta vem da seção Degradação dos pneus (sem stint com menos de 4 voltas limpas).</p>`;
   }
   selPneu.onchange = desenhaDisp; selAgr.onchange = desenhaDisp;
   chkLimpo.onchange = desenhaDisp;
@@ -862,18 +940,150 @@ if (corrida) {
     const desg = v.desgaste ? `<td class="num" title="${fmtRodas(v.desgaste)}">${Math.max(...v.desgaste).toFixed(1)}%</td><td class="num fraco">+${(v.desgaste_volta ?? 0).toFixed(1)}%</td>` : (temDesg ? '<td></td><td></td>' : '');
     const comb = temComb ? `<td class="num">${v.combustivel != null ? v.combustivel.toFixed(2) : ''}</td><td class="num fraco">${v.comb_gasto != null ? v.comb_gasto.toFixed(2) : ''}</td>
       <td class="num">${fmtSaldo(v.saldo_comb)}</td><td class="num ${v.saldo_delta > 0.005 ? 'bom' : v.saldo_delta < -0.005 ? 'ruim' : 'fraco'}" title="${v.saldo_delta > 0 ? 'economizou' : v.saldo_delta < 0 ? 'gastou mais que o planejado' : ''}">${v.saldo_delta != null ? fmtSaldo(v.saldo_delta) : ''}</td>` : '';
-    return `<tr class="${minhaMelhor && v.n === minhaMelhor.n ? 'eu' : ''}"><td class="num">${v.n}</td>
+    return `<tr class="${minhaMelhor && v.n === minhaMelhor.n ? 'eu' : ''}" data-n="${v.n}"><td class="cmp-ck"><input type="checkbox" data-k="${J}:${v.n}" title="comparar esta volta"></td><td class="num">${v.n}</td>
       <td class="${cls}">${v.pit ? 'Box' : (corrida ? '' : TIPO_VOLTA[v.tipo] || '')}</td>
       <td class="num ${cls}" style="${v.valida ? '' : 'text-decoration:line-through'}">${fmtVolta(v.ms)}</td>
       <td class="num fraco">${minhaMelhor && v.valida && delta ? fmtDelta(delta) : ''}</td>${st}
       <td>${v.pneu_visual ? chipPneu(v.pneu_visual) + ` <span class="fraco">${v.pneu_idade ?? ''}</span>` : ''}</td>${desg}${comb}
       <td class="num">${v.vmax || ''}</td>${corrida ? `<td class="num">${v.posicao ? 'P' + v.posicao : ''}</td>` : ''}</tr>`;
   });
-  const linhaLargada = temComb && ci ? `<tr class="fraco"><td class="num">0</td><td colspan="${7 + (temDesg ? 2 : 0)}">Largada</td><td class="num">${ci[0].toFixed(2)}</td><td></td><td class="num">${fmtSaldo(ci[1])}</td><td></td><td></td><td></td></tr>` : '';
-  c.appendChild($(`<div class="tab-wrap"><table><thead><tr><th class="num">Volta</th><th></th><th class="num">Tempo</th><th class="num">vs. melhor</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th>Pneu · idade</th>
+  const linhaLargada = temComb && ci ? `<tr class="fraco"><td></td><td class="num">0</td><td colspan="${7 + (temDesg ? 2 : 0)}">Largada</td><td class="num">${ci[0].toFixed(2)}</td><td></td><td class="num">${fmtSaldo(ci[1])}</td><td></td><td></td><td></td></tr>` : '';
+  const tabV = $(`<div class="tab-wrap"><table><thead><tr><th class="cmp-ck" title="marque para comparar (Comparar voltas, abaixo)">⇄</th><th class="num">Volta</th><th></th><th class="num">Tempo</th><th class="num">vs. melhor</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th>Pneu · idade</th>
     ${temDesg ? '<th class="num">Desgaste</th><th class="num">Na volta</th>' : ''}
     ${temComb ? '<th class="num">Comb. (kg)</th><th class="num">Gasto (kg)</th><th class="num">Saldo</th><th class="num">Economia</th>' : ''}
-    <th class="num">Vel. máx</th>${corrida ? '<th class="num">Posição</th>' : ''}</tr></thead><tbody>${linhaLargada}${linhas.join('')}</tbody></table></div>`));
+    <th class="num">Vel. máx</th>${corrida ? '<th class="num">Posição</th>' : ''}</tr></thead><tbody>${linhaLargada}${linhas.join('')}</tbody></table></div>`);
+  c.appendChild(tabV);
+
+  // ---- comparar voltas: suas e dos outros pilotos (2 a 4 voltas); a primeira é a referência
+  const cmp = card(s, `<h3 style="margin:0 0 4px;font-size:15px">Comparar voltas</h3>
+    <p class="desc" style="margin:0 0 10px">Compare suas voltas com as dos outros pilotos (até 4): desgaste, combustível, saldo, velocidade máxima e posição.
+    Adicione pelo seletor abaixo ou marcando ⇄ nesta tabela ou na tabela "Voltas dos pilotos da sessão". A primeira é a referência; as outras mostram a diferença para ela
+    (<span class="bom">verde</span> = melhor, <span class="ruim">vermelho</span> = pior).</p>
+    <div class="cmp-add linha-ctl"></div><div class="cmp-ctl linha-ctl"></div><div class="tab-wrap cmp-tab"></div>`);
+  const addC = cmp.querySelector('.cmp-add'), ctlC = cmp.querySelector('.cmp-ctl'), tabC = cmp.querySelector('.cmp-tab');
+  const meuPorN = Object.fromEntries(minhas.map(v => [v.n, v]));
+  const pilotosC = [...ORDEM, ...Object.keys(D.voltas).filter(c => !ORDEM.includes(c))].filter(c => (D.voltas[c] || []).length || ehJog(c));
+  const mapaN = (o, c) => (o || {})[c] || (o || {})[+c] || null;
+  const stintsC = c => (D.classificacao.find(x => String(x.idx) === String(c)) || {}).stints || D.stints[c] || [];
+  // tudo o que existe de uma volta de qualquer piloto, no formato da tabela "Suas voltas"
+  function infoVolta(c, n) {
+    if (ehJog(c) && meuPorN[n]) return Object.assign({ c, eu: true }, meuPorN[n]);
+    const v = (D.voltas[c] || []).find(x => x.n === n);
+    if (!v) return null;
+    const o = Object.assign({ c, eu: false }, v);
+    const st = stintsC(c);
+    let ini = 0;
+    for (const x of st) { if (n <= (x.fim === 255 ? 999 : x.fim + 1)) { o.pneu_visual = x.pneu; break; } ini = x.fim + 1; }
+    o.pneu_idade = n - ini - 1;
+    o.pit = new Set(mapaN(D.pit_voltas, c) || []).has(n);
+    const pos = mapaN(D.posicoes, c); if (pos && pos[n] != null) o.posicao = pos[n];
+    const dg = mapaN(D.desgaste_carro, c);
+    if (dg && dg[n]) {
+      o.desgaste = dg[n];
+      const ant = dg[n - 1];
+      o.desgaste_volta = ant && o.pneu_idade > 0 ? Math.max(...dg[n]) - Math.max(...ant) : Math.max(...dg[n]);
+    }
+    const cb = mapaN(D.comb_carro, c);
+    if (cb && cb[n] != null) { o.combustivel = cb[n]; if (cb[n - 1] != null && cb[n - 1] > cb[n]) o.comb_gasto = cb[n - 1] - cb[n]; }
+    const sd = mapaN(D.saldo_carro, c);
+    if (sd && sd[n] != null) { o.saldo_comb = sd[n]; if (sd[n - 1] != null) o.saldo_delta = +(sd[n] - sd[n - 1]).toFixed(2); }
+    const vm = mapaN(D.vmax_volta_carro, c);
+    if (vm && vm[n]) o.vmax = vm[n];
+    return o;
+  }
+  let marcadas = [];   // [{c, n}]
+  const chave = x => x.c + ':' + x.n;
+  const f1 = x => x.toFixed(1), f2 = x => x.toFixed(2);
+  const dNum = (casas, unid = '') => d => (d > 0 ? '+' : d < 0 ? '−' : '±') + Math.abs(d).toFixed(casas) + unid;
+  // [rótulo, valor(v), formatação, melhor ('-' menor, '+' maior, '' neutro), formatação da diferença, grupo]
+  const LINHAS_C = [
+    ['Desgaste', v => v.desgaste ? Math.max(...v.desgaste) : null, x => f1(x) + '%', '-', dNum(1, '%')],
+    ['Na volta', v => v.desgaste_volta ?? null, x => '+' + f1(x) + '%', '-', dNum(1, '%')],
+    ['Comb. (kg)', v => v.combustivel ?? null, x => f2(x), '', dNum(2, ' kg')],
+    ['Gasto (kg)', v => v.comb_gasto ?? null, x => f2(x), '-', dNum(2, ' kg')],
+    ['Saldo', v => v.saldo_comb ?? null, fmtSaldo, '+', dNum(2)],
+    ['Economia', v => v.saldo_delta ?? null, fmtSaldo, '+', dNum(2)],
+    ['Vel. máx', v => v.vmax || null, x => x + ' km/h', '+', dNum(0, ' km/h')],
+    ['Posição', v => v.posicao ?? null, x => 'P' + x, '-', d => (d > 0 ? '+' : d < 0 ? '−' : '±') + Math.abs(d)],
+  ];
+  const nomeV = x => `${esc(nome(x.c))} · V${x.n}`;
+  // seletor para adicionar qualquer volta de qualquer piloto
+  addC.innerHTML = `<span class="fraco">Adicionar volta:</span><select class="cmp-p">${pilotosC.map(c => `<option value="${c}">${esc(nome(c))}${ehJog(c) ? ' (você)' : ''}</option>`).join('')}</select>
+    <select class="cmp-n"></select><button class="btn cmp-mais">adicionar</button>`;
+  const selCP = addC.querySelector('.cmp-p'), selCN = addC.querySelector('.cmp-n'), btMais = addC.querySelector('.cmp-mais');
+  function opcoesN() {
+    const c = selCP.value, vs = (D.voltas[c] || []).length ? D.voltas[c] : minhas;
+    const melhor = vs.filter(v => v.valida && v.ms).sort((a, b) => a.ms - b.ms)[0];
+    selCN.innerHTML = vs.filter(v => v.ms).map(v => `<option value="${v.n}">volta ${v.n} · ${fmtVolta(v.ms)}${v.valida ? '' : ' (inválida)'}${melhor && v.n === melhor.n ? ' · melhor' : ''}</option>`).join('');
+    if (melhor) selCN.value = melhor.n;
+  }
+  selCP.onchange = opcoesN;
+  btMais.onclick = () => alternar(selCP.value, +selCN.value, true);
+  function alternar(c, n, ligar) {
+    c = String(c);
+    const k = c + ':' + n, tem = marcadas.some(x => chave(x) === k);
+    if (ligar && !tem) { if (marcadas.length >= 4) return; if (!infoVolta(c, n)) return; marcadas.push({ c, n }); }
+    else if (!ligar && tem) marcadas = marcadas.filter(x => chave(x) !== k);
+    desenharCmp();
+  }
+  const tabelasCk = [tabV];
+  window.cmpVoltas = { alternar, registrar: t => { tabelasCk.push(t); desenharCmp(); } };
+  function desenharCmp() {
+    const ks = new Set(marcadas.map(chave));
+    tabelasCk.forEach(tb => tb.querySelectorAll('input[data-k]').forEach(ck => { ck.checked = ks.has(ck.dataset.k); ck.disabled = !ck.checked && marcadas.length >= 4; ck.closest('tr').classList.toggle('cmp-sel', ck.checked); }));
+    btMais.disabled = marcadas.length >= 4;
+    const temTr = window.abrirAnalise && marcadas.length >= 2 && marcadas.slice(0, 2).every(x => window.abrirAnalise.tem(x.c, x.n));
+    const corC = c => ehJog(c) ? 'var(--s1)' : (D.pilotos[c] || {}).cor || 'var(--ink2)';
+    ctlC.innerHTML = marcadas.length ? `${marcadas.map((x, k) => `<span class="chip-c ${k ? '' : 'ativo'}" style="--c:${corC(x.c)}" data-k="${chave(x)}" title="${k ? 'clique para usar como referência' : 'referência'}">${nomeV(x)}${k ? '' : ' · referência'}<b class="cmp-x" title="remover">×</b></span>`).join('')}
+      <button class="btn cmp-limpar">limpar</button>${temTr ? `<button class="btn cmp-analise">ver as duas primeiras na Análise de volta</button>` : ''}` : '';
+    ctlC.querySelectorAll('.chip-c').forEach(b => b.onclick = e => {
+      const k = b.dataset.k;
+      if (e.target.classList.contains('cmp-x')) marcadas = marcadas.filter(x => chave(x) !== k);
+      else marcadas = [...marcadas.filter(x => chave(x) === k), ...marcadas.filter(x => chave(x) !== k)];
+      desenharCmp();
+    });
+    const bl = ctlC.querySelector('.cmp-limpar'); if (bl) bl.onclick = () => { marcadas = []; desenharCmp(); };
+    const ba = ctlC.querySelector('.cmp-analise'); if (ba) ba.onclick = () => window.abrirAnalise(marcadas[0], marcadas[1]);
+    if (marcadas.length < 2) { tabC.innerHTML = `<p class="fraco" style="margin:4px 0">${marcadas.length ? 'Adicione mais uma volta para comparar.' : 'Nenhuma volta escolhida.'}</p>`; return; }
+    const vs = marcadas.map(x => infoVolta(x.c, x.n));
+    const ref = vs[0];
+    const temAlgum = l => vs.some(v => { const x = l[1](v); return x != null && x !== ''; });
+    let grupo = '';
+    const corpo = LINHAS_C.filter(temAlgum).map(([rot, val, fmt, melhor, fd, g]) => {
+      let h = '';
+      if (g && g !== grupo) { grupo = g; h += `<tr class="cmp-grupo"><td colspan="${vs.length + 1}">${g}</td></tr>`; }
+      const r = val(ref);
+      const cel = vs.map((v, k) => {
+        const x = val(v);
+        if (x == null || x === '') return '<td class="num fraco">—</td>';
+        let dif = '';
+        if (k && fd && r != null && typeof x === 'number' && typeof r === 'number') {
+          const d = x - r, eps = rot === 'Tempo' || /^S\d/.test(rot) ? 0.5 : 1e-6;
+          const cls = !melhor || Math.abs(d) < eps ? 'fraco' : (melhor === '-' ? d < 0 : d > 0) ? 'bom' : 'ruim';
+          dif = ` <span class="cmp-d ${cls}">${fd(d)}</span>`;
+        }
+        return `<td class="num">${fmt(x)}${dif}</td>`;
+      }).join('');
+      return h + `<tr><th>${rot}</th>${cel}</tr>`;
+    }).join('');
+    tabC.innerHTML = `<table class="cmp"><thead><tr><th></th>${marcadas.map((x, k) => `<th class="num"><span class="ponto" style="background:${corC(x.c)};margin:0 4px 0 0"></span>${nomeV(x)} <span class="fraco">· ${fmtVolta(vs[k].ms)}${vs[k].valida ? '' : ' (inválida)'}${vs[k].pit ? ' · box' : ''}${k ? '' : ' · ref.'}</span></th>`).join('')}</tr></thead><tbody>${corpo}</tbody></table>`;
+  }
+  tabV.addEventListener('change', e => {
+    const ck = e.target.closest('input[data-k]'); if (!ck) return;
+    const [c, n] = ck.dataset.k.split(':'); alternar(c, +n, ck.checked);
+  });
+  // começa com a sua melhor volta × a melhor volta do piloto mais perto de você (à frente; se você venceu, o de trás)
+  {
+    const melhorDe = c => ((D.voltas[c] || []).length ? D.voltas[c] : minhas).filter(v => v.valida && !v.pit && v.ms).sort((a, b) => a.ms - b.ms)[0];
+    const iJ = ORDEM.indexOf(J), viz = iJ > 0 ? ORDEM[iJ - 1] : ORDEM[iJ + 1] || ORDEM.find(c => c !== J);
+    const mJ = melhorDe(J), mV = viz != null ? melhorDe(viz) : null;
+    if (mJ) marcadas.push({ c: J, n: mJ.n });
+    if (mV) marcadas.push({ c: String(viz), n: mV.n });
+    if (viz != null) selCP.value = String(viz);
+    opcoesN();
+  }
+  desenharCmp();
+  setTimeout(desenharCmp, 0);   // a Análise de volta é montada depois; redesenha para mostrar o botão
   if (temComb && ci) {
     const ult = [...minhas].reverse().find(v => v.saldo_comb != null);
     const gastos = minhas.filter(v => v.comb_gasto != null && v.comb_gasto > 0);
@@ -910,17 +1120,22 @@ if (corrida) {
       if (!chk.checked) linhas = linhas.filter(v => v.valida);
       const ref = melhorGeral ? melhorGeral.ms : null;
       linhas.sort(selO.value === 'tempo' ? (a, b) => a.ms - b.ms : (a, b) => ORDEM.indexOf(a.c) - ORDEM.indexOf(b.c) || a.n - b.n);
-      caixa.innerHTML = `<table><thead><tr><th class="num">#</th><th>Piloto</th><th class="num">Volta</th><th class="num">Tempo</th><th class="num">vs. melhor da sessão</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th>Pneu</th></tr></thead><tbody>${linhas.map((v, i) => {
+      caixa.innerHTML = `<table><thead><tr><th class="cmp-ck" title="marque para comparar (Comparar voltas, na seção Suas voltas)">⇄</th><th class="num">#</th><th>Piloto</th><th class="num">Volta</th><th class="num">Tempo</th><th class="num">vs. melhor da sessão</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th>Pneu</th></tr></thead><tbody>${linhas.map((v, i) => {
         const pb = v.valida && v.ms === melhorDe[v.c];
         const st = v.s.map((ms, k) => `<td class="num ${v.valida && v.s_validos[k] ? (ms === melhorSetor[k] ? 'roxo' : ms === setorDe[v.c][k] ? 'verde' : '') : 'fraco'}">${fmtSetor(ms)}</td>`).join('');
         const p = pneuDaVolta(v.c, v.n);
-        return `<tr class="${ehJog(v.c) ? 'eu' : ''}"><td class="num fraco">${i + 1}</td><td>${esc(nome(v.c))}</td><td class="num">${v.n}</td>
+        return `<tr class="${ehJog(v.c) ? 'eu' : ''}"><td class="cmp-ck"><input type="checkbox" data-k="${v.c}:${v.n}" title="comparar esta volta"></td><td class="num fraco">${i + 1}</td><td>${esc(nome(v.c))}</td><td class="num">${v.n}</td>
           <td class="num ${v.valida ? (ref && v.ms === ref ? 'roxo' : pb ? 'verde' : '') : 'fraco'}" style="${v.valida ? '' : 'text-decoration:line-through'}">${fmtVolta(v.ms)}</td>
           <td class="num fraco">${ref && v.valida && v.ms !== ref ? fmtDelta(v.ms - ref) : ''}</td>${st}<td>${p ? chipPneu(p) : ''}</td></tr>`;
       }).join('')}</tbody></table>`;
     }
-    [selP, selO, chk].forEach(e => e.onchange = desenhar);
+    [selP, selO, chk].forEach(e => e.onchange = () => { desenhar(); if (window.cmpVoltas) window.cmpVoltas.registrar(caixa); });
     desenhar();
+    caixa.addEventListener('change', e => {
+      const ck = e.target.closest('input[data-k]'); if (!ck || !window.cmpVoltas) return;
+      const [c, n] = ck.dataset.k.split(':'); window.cmpVoltas.alternar(c, +n, ck.checked);
+    });
+    if (window.cmpVoltas) window.cmpVoltas.registrar(caixa);
   }
 }
 
@@ -1953,6 +2168,17 @@ if (TR.length) {
   selA.onchange = atualizar; selB.onchange = atualizar;
   selCor.onchange = () => { if (selCor.value === 'tracado') trc.ligar(true); else { trc.ligar(false); desenharMapa(); Plotly.Plots.resize(eM); } };
   desenhos.push(atualizar);
+  // usado pelo "Comparar voltas": abre a análise com duas voltas suas
+  window.abrirAnalise = (a, b) => {
+    const ia = TR.findIndex(t => String(t.carro) === String(a.c) && t.volta === a.n), ib = TR.findIndex(t => String(t.carro) === String(b.c) && t.volta === b.n);
+    if (ia < 0 || ib < 0) return;
+    selA.value = ia; selB.value = ib;
+    const jaDesenhada = desenhadas.has('comparacao');
+    mostrarAba('comparacao');
+    window.scrollTo({ top: nav.offsetTop });
+    if (jaDesenhada) atualizar();
+  };
+  window.abrirAnalise.tem = (c, n) => TR.some(t => String(t.carro) === String(c) && t.volta === n);
   // usado pelo "Seu resumo": abre a análise com sua melhor volta × referência, já na curva
   window.irParaCurva = (k, R) => {
     const ia = TR.findIndex(t => ehJog(t.carro) && t.volta === R.volta);
@@ -1980,9 +2206,26 @@ if (minhas.some(v => v.desgaste || v.temp_pneus || v.ers_usado != null)) {
     const c = card(g, '<h3 style="margin:0 0 6px;font-size:15px">Desgaste dos pneus</h3>');
     plot(div(c, 'grafico', 320), linhasRodas('desgaste', '%'), () => baseLayout({ yaxis: { title: { text: '% de desgaste' }, rangemode: 'tozero' }, xaxis: { title: { text: 'volta' }, dtick: 1 }, hovermode: 'x unified', shapes: scShapes() }));
   }
-  if (corrida && minhas.some(v => v.temp_pneus)) {
-    const c = card(g, '<h3 style="margin:0 0 6px;font-size:15px">Temperatura média da superfície dos pneus</h3>');
-    plot(div(c, 'grafico', 320), linhasRodas('temp_pneus', ' °C'), () => baseLayout({ yaxis: { title: { text: '°C (média da volta)' } }, xaxis: { title: { text: 'volta' }, dtick: 1 }, hovermode: 'x unified' }));
+  if (corrida && minhas.some(v => v.temp_curva || v.temp_pneus || v.temp_nucleo)) {
+    // superfície (nas curvas) ou núcleo, num gráfico só
+    const cur = minhas.some(v => v.temp_curva);
+    const OPC = [[cur ? 'temp_curva' : 'temp_pneus', cur ? 'Superfície nas curvas' : 'Superfície (volta inteira)',
+                  cur ? 'Média da superfície só em curvas e freadas, onde o pneu trabalha; é a que vale para a janela de aderência (Resumo › Temperatura dos pneus por composto).'
+                      : 'Média da volta inteira: nas retas a superfície esfria, então fica abaixo do real. Gere o relatório de novo para ver só as curvas.'],
+                 ['temp_nucleo', 'Núcleo', 'A parte de dentro do pneu (carcaça), média da volta. Muda devagar: mostra se o pneu está aquecendo ou esfriando ao longo do stint.']]
+      .filter(([k]) => minhas.some(v => v[k]));
+    const c = card(g, `<h3 style="margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">Temperatura dos pneus
+      ${OPC.length > 1 ? `<select class="tp-sel" style="font-weight:400">${OPC.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select>` : `<span class="fraco" style="font-weight:400">${OPC[0][1]}</span>`}</h3>
+      <p class="desc tp-desc" style="margin-bottom:4px"></p>`);
+    const selT = c.querySelector('.tp-sel'), dsc = c.querySelector('.tp-desc');
+    const el = div(c, 'grafico', 320);
+    const desenhaT = () => {
+      const o = OPC.find(x => x[0] === (selT ? selT.value : OPC[0][0]));
+      dsc.textContent = o[2];
+      Plotly.react(el, linhasRodas(o[0], ' °C')(), baseLayout({ yaxis: { title: { text: o[0] === 'temp_curva' ? '°C (em curva)' : '°C (média da volta)' } }, xaxis: { title: { text: 'volta' }, dtick: 1 }, hovermode: 'x unified' }), CFG);
+    };
+    if (selT) selT.onchange = desenhaT;
+    desenhos.push(desenhaT);
   }
   if (corrida && minhas.some(v => v.saldo_comb != null)) {
     const ci = M.comb_inicial;
@@ -1999,11 +2242,14 @@ if (minhas.some(v => v.desgaste || v.temp_pneus || v.ers_usado != null)) {
   }
   if (minhas.some(v => v.ers_usado != null)) {
     const c = card(g, `<h3 style="margin:0 0 2px;font-size:15px">Energia (ERS) por volta</h3><p class="desc" style="margin-bottom:4px">Tudo em % da bateria (${M.bateria_mj} MJ). A bateria no fim da volta = início − usada + recuperada; por isso a usada pode passar de 100%.</p>`);
+    c.style.gridColumn = '1 / -1';
+    const lados = $(`<div class="ers-lados"><div></div><div></div></div>`); c.appendChild(lados);
+    const [ladoA, ladoB] = lados.children;
     const mj = p => p == null ? '' : (p * M.bateria_mj / 100).toFixed(2) + ' MJ';
     // nível da bateria (0–100%) num gráfico e energia usada/recuperada (pode passar de 100%) em outro:
     // juntos, a escala de um escondia o outro ao dar zoom
-    c.appendChild($('<p class="fraco" style="font-size:12px;margin:2px 0 0">Nível da bateria</p>'));
-    plot(div(c, 'grafico', 230), () => [
+    ladoA.appendChild($('<p class="fraco" style="font-size:12px;margin:2px 0 0">Nível da bateria</p>'));
+    plot(div(ladoA, 'grafico', 260), () => [
       { type: 'scatter', mode: 'lines+markers', x: xs, y: minhas.map(v => v.ers_inicio ?? null), name: 'início da volta', line: { color: css('--s7'), width: 2 },
         marker: { size: 7, color: css('--s7'), line: { color: css('--surface'), width: 2 } },
         customdata: minhas.map(v => mj(v.ers_inicio)), hovertemplate: 'início: %{y:.0f}% (%{customdata})<extra>volta %{x}</extra>' },
@@ -2011,8 +2257,8 @@ if (minhas.some(v => v.desgaste || v.temp_pneus || v.ers_usado != null)) {
         marker: { size: 6, color: css('--s4'), line: { color: css('--surface'), width: 2 } },
         customdata: minhas.map(v => mj(v.ers_bateria)), hovertemplate: 'fim: %{y:.0f}% (%{customdata})<extra>volta %{x}</extra>' },
     ], () => baseLayout({ yaxis: { title: { text: '% da bateria' }, range: [0, 105], ticksuffix: '%' }, xaxis: { title: { text: 'volta' }, dtick: 1 }, hovermode: 'x unified' }));
-    c.appendChild($('<p class="fraco" style="font-size:12px;margin:10px 0 0">Energia usada e recuperada na volta</p>'));
-    plot(div(c, 'grafico', 260), () => [
+    ladoB.appendChild($('<p class="fraco" style="font-size:12px;margin:2px 0 0">Energia usada e recuperada na volta</p>'));
+    plot(div(ladoB, 'grafico', 260), () => [
       { type: 'bar', x: xs, y: minhas.map(v => v.ers_usado), name: 'usada', marker: { color: css('--s1') },
         customdata: minhas.map(v => [mj(v.ers_usado), v.ers_bateria]), hovertemplate: 'usada: %{y:.0f}% (%{customdata[0]})<br>sobrou no fim da volta: %{customdata[1]:.0f}%<extra>volta %{x}</extra>' },
       { type: 'bar', x: xs, y: minhas.map(v => v.ers_recuperado), name: 'recuperada', marker: { color: css('--s3') },
@@ -2139,38 +2385,95 @@ function mapaDesgaste(s) {
 
 // ---------- energia: você × outros pilotos (volta a volta)
 function energiaComparada(s) {
+  // pneus, combustível e energia volta a volta, você × outros pilotos
   const E = D.energia_carros || {};
-  const comDados = ORDEM.filter(c => E[c] && Object.keys(E[c]).length);
-  if (comDados.length < 2) return;
-  const c = card(s, `<h3 style="margin:0 0 2px;font-size:15px">Energia: comparar com outros pilotos</h3>
-    <p class="desc" style="margin-bottom:6px">Em % da bateria (${M.bateria_mj} MJ), volta a volta. Escolha o que comparar e os pilotos. Online o jogo às vezes não manda a energia de um rival numa volta: essas voltas ficam de fora (não entram na média).</p>`);
+  const pegaM = (o, c) => (o || {})[c] || (o || {})[+c] || null;
+  const meuN = Object.fromEntries(minhas.map(v => [v.n, v]));
+  const doJog = (c, campo) => ehJog(c) ? Object.fromEntries(minhas.filter(v => v[campo] != null).map(v => [v.n, v[campo]])) : null;
+  const porRoda = (o, roda) => o == null ? null : roda === 'max' ? Math.max(...o) : roda === 'med' ? o.reduce((a, b) => a + b, 0) / 4 : o[+roda];
+  const RODAS_OPC = [['max', 'pneu mais gasto / mais quente'], ['med', 'média das 4 rodas'], ['2', 'DE'], ['3', 'DD'], ['0', 'TE'], ['1', 'TD']];
+  // cada medida devolve {volta: valor} para o carro
+  const MED = {
+    desg: { rot: 'Desgaste dos pneus', un: '%', casas: 1, roda: 'max', so: corrida, f: (c, r) => mapa(pegaM(D.desgaste_carro, c), x => porRoda(x, r)) },
+    desgv: { rot: 'Desgaste na volta', un: '%', casas: 1, roda: 'max', so: corrida, f: (c, r) => { const d = pegaM(D.desgaste_carro, c) || {}; const o = {};
+      Object.keys(d).map(Number).forEach(n => { if (d[n - 1]) { const v = porRoda(d[n], r) - porRoda(d[n - 1], r); if (v >= 0) o[n] = v; } }); return o; } },
+    tnuc: { rot: 'Temperatura do núcleo dos pneus', un: ' °C', casas: 0, roda: 'med', f: (c, r) => mapa(doJog(c, 'temp_nucleo') || pegaM(D.temp_nucleo_carro, c), x => porRoda(x, r)) },
+    tsup: { rot: 'Temperatura da superfície nas curvas', un: ' °C', casas: 0, roda: 'med', f: (c, r) => mapa(doJog(c, 'temp_curva') || pegaM(D.temp_curva_carro, c), x => porRoda(x, r)) },
+    comb: { rot: 'Combustível no tanque', un: ' kg', casas: 2, so: corrida, f: c => mapa(pegaM(D.comb_carro, c), x => x) },
+    gasto: { rot: 'Combustível gasto na volta', un: ' kg', casas: 2, so: corrida, f: c => { const d = pegaM(D.comb_carro, c) || {}; const o = {};
+      Object.keys(d).map(Number).forEach(n => { if (d[n - 1] != null) { const v = d[n - 1] - d[n]; if (v > 0 && v < 5) o[n] = v; } }); return o; } },
+    saldo: { rot: 'Saldo de combustível (voltas)', un: '', casas: 2, so: corrida, f: c => doJog(c, 'saldo_comb') || mapa(pegaM(D.saldo_carro, c), x => x) },
+    usado: { rot: 'Energia usada na volta', un: '%', casas: 0, f: c => mapa(E[c], e => e.usado) },
+    recup: { rot: 'Energia recuperada na volta', un: '%', casas: 0, f: c => mapa(E[c], e => e.recup) },
+    nivel: { rot: 'Nível da bateria (início e fim da volta)', un: '%', casas: 0, f: c => mapa(E[c], e => e.ini), f2: c => { const o = mapa(E[c], e => e.fim); const u = Math.max(...Object.keys(o).map(Number)); if (o[u] === 0) delete o[u]; return o; } },   // fim 0 na última volta = sessão acabou, não bateria vazia
+    esaldo: { rot: 'Energia recuperada − usada', un: '%', casas: 0, f: c => mapa(E[c], e => e.recup != null ? e.recup - e.usado : null) },
+  };
+  function mapa(o, fn) { const r = {}; Object.entries(o || {}).forEach(([n, v]) => { const x = v == null ? null : fn(v); if (x != null && isFinite(x)) r[+n] = x; }); return r; }
+  const GRUPOS = [['Pneus', ['desg', 'desgv', 'tsup', 'tnuc']], ['Combustível', ['comb', 'gasto', 'saldo']], ['Energia (% da bateria)', ['nivel', 'usado', 'recup', 'esaldo']]];
+  const temDados = (k, c) => Object.keys(MED[k].f(c, MED[k].roda || 'max')).length > 0;
+  const outros = ORDEM.filter(c => !ehJog(c));
+  const medidas = Object.keys(MED).filter(k => MED[k].so !== false && (temDados(k, J) || outros.some(c => temDados(k, c))));
+  if (!medidas.length || !ORDEM.length) return;
+  const c = card(s, `<h3 style="margin:0 0 2px;font-size:15px">Comparar com outros pilotos</h3>
+    <p class="desc" style="margin-bottom:6px">Os mesmos gráficos de cima, volta a volta, para você e os pilotos que escolher. Nas medidas de pneu, escolha a roda.
+    Online o jogo às vezes não manda os dados de um rival (telemetria fechada): essas voltas ou pilotos ficam sem linha.</p>`);
   c.style.marginTop = '14px';
-  const ctl = $(`<div class="linha-ctl"><select><option value="usado">energia usada na volta</option><option value="recup">energia recuperada na volta</option>
-    <option value="ini">bateria no início da volta</option><option value="fim">bateria no fim da volta</option><option value="saldo">recuperada − usada</option></select></div>`);
+  const ctl = $(`<div class="linha-ctl"><label>Medida<select class="cc-m">${GRUPOS.map(([g, ks]) => { const k2 = ks.filter(k => medidas.includes(k)); return k2.length ? `<optgroup label="${g}">${k2.map(k => `<option value="${k}">${MED[k].rot}</option>`).join('')}</optgroup>` : ''; }).join('')}</select></label>
+    <label class="cc-rl">Roda<select class="cc-r">${RODAS_OPC.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></label></div>`);
   c.appendChild(ctl);
-  const selM = ctl.querySelector('select');
-  const vizinho = comDados.find(x => !ehJog(x));
-  let sel = [J, vizinho].filter(Boolean);
-  const el = div(c, 'grafico', 330);
+  const selM = ctl.querySelector('.cc-m'), selR = ctl.querySelector('.cc-r'), lblR = ctl.querySelector('.cc-rl');
+  const iJ = ORDEM.indexOf(J), viz = iJ > 0 ? ORDEM[iJ - 1] : ORDEM[iJ + 1] || outros[0];
+  let sel = [J, viz].filter(x => x != null);
+  const picker = $('<div></div>'); c.appendChild(picker);
+  const el = div(c, 'grafico', 340);
+  const aviso = $(`<p class="fraco" style="font-size:12px;margin:4px 0 0"></p>`); c.appendChild(aviso);
   const tab = $(`<div class="tab-scroll" style="margin-top:8px"></div>`); c.appendChild(tab);
-  const pega = (e, m) => m === 'saldo' ? (e.recup != null ? +(e.recup - e.usado).toFixed(1) : null) : e[m] ?? null;
+  let ultimaM = null;
   function desenhar() {
-    const m = selM.value;
-    const tr = sel.filter(x => E[x]).map(x => {
-      const vs = Object.keys(E[x]).map(Number).sort((a, b) => a - b);
-      const cor = corPiloto(x, sel);
-      return { x: vs, y: vs.map(v => pega(E[x][v], m)), mode: 'lines+markers', name: ehJog(x) ? 'Você' : nome(x), line: { color: cor, width: 2 },
-        marker: { size: 7, color: cor, line: { color: css('--surface'), width: 2 } }, hovertemplate: `%{y:.0f}%<extra>${esc(ehJog(x) ? 'Você' : nome(x))} · volta %{x}</extra>` };
+    const k = selM.value, m = MED[k];
+    const temRoda = !!m.roda;
+    lblR.style.display = temRoda ? '' : 'none';
+    if (temRoda && ultimaM !== k) selR.value = m.roda;
+    ultimaM = k;
+    const fmt = x => x == null ? '—' : (k === 'saldo' || k === 'esaldo') && x > 0 ? '+' + x.toFixed(m.casas) + m.un : x.toFixed(m.casas) + m.un;
+    const dados = sel.map(x => ({ c: x, d: m.f(x, selR.value) }));
+    const sem = dados.filter(x => !Object.keys(x.d).length).map(x => ehJog(x.c) ? 'você' : nome(x.c));
+    const tr = dados.filter(x => Object.keys(x.d).length).map(x => {
+      const vs = Object.keys(x.d).map(Number).sort((a, b) => a - b);
+      const cor = corPiloto(x.c, sel), pits = new Set(pegaM(D.pit_voltas, x.c) || []);
+      return { x: vs, y: vs.map(v => x.d[v]), mode: 'lines+markers', name: ehJog(x.c) ? 'Você' : nome(x.c), line: { color: cor, width: 2 },
+        marker: { size: vs.map(v => pits.has(v) ? 9 : 7), symbol: vs.map(v => pits.has(v) ? 'diamond' : 'circle'), color: cor, line: { color: css('--surface'), width: 2 } },
+        customdata: vs.map(v => [fmt(x.d[v]), pits.has(v) ? ' · box' : '']),
+        hovertemplate: `%{customdata[0]}<extra>${esc(ehJog(x.c) ? 'Você' : nome(x.c))} · volta %{x}%{customdata[1]}</extra>` };
     });
-    Plotly.react(el, tr, baseLayout({ yaxis: { title: { text: '% da bateria' }, ticksuffix: '%', zeroline: m === 'saldo', zerolinecolor: css('--axis') }, xaxis: { title: { text: 'volta' }, dtick: 1 }, hovermode: 'x unified' }), CFG);
-    // médias
-    const med = x => { const v = Object.values(E[x] || {}).map(e => pega(e, m)).filter(v => v != null); return v.length ? media(v) : null; };
-    tab.innerHTML = `<table class="compacta"><thead><tr><th></th><th class="num">média</th><th class="num">voltas</th></tr></thead><tbody>${sel.map(x =>
-      `<tr class="${ehJog(x) ? 'eu' : ''}"><td><span class="ponto" style="background:${corPiloto(x, sel)}"></span>${esc(ehJog(x) ? 'Você' : nome(x))}</td><td class="num">${med(x) == null ? '—' : med(x).toFixed(0) + '%'}</td><td class="num">${Object.keys(E[x] || {}).length}</td></tr>`).join('')}</tbody></table>`;
+    if (m.f2) dados.forEach((x, i) => {
+      const d2 = m.f2(x.c); const vs = Object.keys(d2).map(Number).sort((a, b) => a - b);
+      if (!vs.length) return;
+      const cor = corPiloto(x.c, sel);
+      tr.push({ x: vs, y: vs.map(v => d2[v]), mode: 'lines+markers', name: (ehJog(x.c) ? 'Você' : nome(x.c)) + ' · fim', legendgroup: x.c,
+        line: { color: cor, width: 2, dash: 'dot' }, marker: { size: 6, color: cor, symbol: 'circle-open' },
+        hovertemplate: `fim: %{y:.0f}%<extra>${esc(ehJog(x.c) ? 'Você' : nome(x.c))} · volta %{x}</extra>` });
+    });
+    if (m.f2) tr.forEach(t => { if (!t.name.endsWith(' · fim')) { t.name += ' · início'; t.hovertemplate = t.hovertemplate.replace('%{customdata[0]}', 'início: %{customdata[0]}'); } });
+    Plotly.react(el, tr, baseLayout({ yaxis: Object.assign({ title: { text: ({ '%': '%', ' °C': '°C', ' kg': 'kg', '': 'voltas' })[m.un] } }, k === 'nivel' ? { range: [0, 105], ticksuffix: '%' } : {}, k === 'desg' || k === 'comb' ? { rangemode: 'tozero' } : {}, (k === 'saldo' || k === 'esaldo') ? { zeroline: true, zerolinecolor: css('--axis') } : {}),
+      xaxis: { title: { text: 'volta' }, dtick: 1 }, hovermode: 'x unified', shapes: scShapes() }), CFG);
+    aviso.textContent = sem.length ? `Sem dados desta medida para: ${sem.join(', ')}${(k === 'saldo' || k === 'tnuc' || k === 'tsup') ? ' (relatórios antigos só têm do seu carro)' : ''}.` : '';
+    const st = x => { const v = Object.values(x.d); if (!v.length) return null; const ks = Object.keys(x.d).map(Number).sort((a, b) => a - b);
+      return { med: v.reduce((a, b) => a + b, 0) / v.length, min: Math.min(...v), max: Math.max(...v), ult: x.d[ks[ks.length - 1]], n: v.length }; };
+    if (m.f2) {
+      tab.innerHTML = `<table class="compacta"><thead><tr><th></th><th class="num">início (média)</th><th class="num">fim (média)</th><th class="num">menor no fim</th><th class="num">maior no fim</th><th class="num">voltas</th></tr></thead><tbody>${dados.map(x => {
+        const a = Object.values(x.d), b = Object.values(m.f2(x.c)); const md = v => v.length ? v.reduce((p, q) => p + q, 0) / v.length : null;
+        return `<tr class="${ehJog(x.c) ? 'eu' : ''}"><td><span class="ponto" style="background:${corPiloto(x.c, sel)}"></span>${esc(ehJog(x.c) ? 'Você' : nome(x.c))}</td>${a.length ? `<td class="num">${fmt(md(a))}</td><td class="num">${fmt(md(b))}</td><td class="num">${b.length ? fmt(Math.min(...b)) : '—'}</td><td class="num">${b.length ? fmt(Math.max(...b)) : '—'}</td><td class="num">${a.length}</td>` : '<td class="num fraco" colspan="5">sem dados</td>'}</tr>`;
+      }).join('')}</tbody></table>`;
+      return;
+    }
+    tab.innerHTML = `<table class="compacta"><thead><tr><th></th><th class="num">média</th><th class="num">mínimo</th><th class="num">máximo</th><th class="num">última volta</th><th class="num">voltas</th></tr></thead><tbody>${dados.map(x => {
+      const e = st(x);
+      return `<tr class="${ehJog(x.c) ? 'eu' : ''}"><td><span class="ponto" style="background:${corPiloto(x.c, sel)}"></span>${esc(ehJog(x.c) ? 'Você' : nome(x.c))}</td>${e ? `<td class="num">${fmt(e.med)}</td><td class="num">${fmt(e.min)}</td><td class="num">${fmt(e.max)}</td><td class="num">${fmt(e.ult)}</td><td class="num">${e.n}</td>` : '<td class="num fraco" colspan="5">sem dados</td>'}</tr>`;
+    }).join('')}</tbody></table>`;
   }
-  const picker = $('<div></div>'); ctl.prepend(picker);
   seletor(picker, { inicial: sel, aoMudar: x => { sel = x; desenhar(); } });
-  selM.onchange = desenhar;
+  selM.onchange = desenhar; selR.onchange = desenhar;
   desenhos.push(desenhar);
 }
 

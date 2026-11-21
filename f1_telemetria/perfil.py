@@ -28,6 +28,7 @@ LIMITES = {"front_wing": (0, 50, 2), "rear_wing": (0, 50, 2), "on_throttle": (10
 # na classificação (parc fermé) só dá para mexer nisto
 CAMPOS_QUALI = {"front_wing", "on_throttle", "off_throttle", "brake_bias", "front_left_tyre_pressure", "rear_left_tyre_pressure"}
 QUENTE, FRIO = 20, 30       # % do tempo acima / abaixo da janela de temperatura para contar como pneu quente / frio
+ADER_MIN = 98.0             # frio só conta se a aderência média cair abaixo disso (o jogo ainda mostra verde acima)
 NOMES = {"front_wing": "Asa dianteira", "rear_wing": "Asa traseira", "on_throttle": "Diferencial ao acelerar",
          "off_throttle": "Diferencial ao desacelerar", "front_anti_roll_bar": "Barra anti-rolagem dianteira",
          "rear_anti_roll_bar": "Barra anti-rolagem traseira", "front_suspension": "Suspensão dianteira",
@@ -178,20 +179,24 @@ def metricas_sessao(D, apices):
         fases = {k: [] for k in fases}
     # temperatura dos pneus por eixo (% do tempo acima/abaixo da janela), das contas do resumo
     pneus = {}
-    comps = ((D.get("seu_resumo") or {}).get("pneus_comp")) or []
+    # só conta com a superfície medida em curvas e freadas; sessões antigas usavam a média da volta
+    # inteira (retas incluídas), ficavam sempre "frias" e não entram (por isso a chave nova "pneus_c")
+    sr = D.get("seu_resumo") or {}
+    comps = (sr.get("pneus_comp") or []) if sr.get("pneus_base") == "superficie_curva" else []
     for eixo, rodas_ in (("diant", ("DE", "DD")), ("tras", ("TE", "TD"))):
-        acima, abaixo, peso = 0.0, 0.0, 0
+        acima, abaixo, ader, peso = 0.0, 0.0, 0.0, 0
         for g in comps:
             nv = len(g.get("voltas") or [])
             for r in g.get("rodas") or []:
                 if r["roda"] in rodas_:
                     acima += r["acima"] * nv
                     abaixo += r["abaixo"] * nv
+                    ader += r.get("aderencia_media", 100) * nv
                     peso += nv
         if peso:
-            pneus[eixo] = {"acima": round(acima / peso, 1), "abaixo": round(abaixo / peso, 1)}
+            pneus[eixo] = {"acima": round(acima / peso, 1), "abaixo": round(abaixo / peso, 1), "aderencia": round(ader / peso, 2)}
     return {
-        "voltas": len(voltas), "voltas_rodas": voltas_mx, "pneus": pneus,
+        "voltas": len(voltas), "voltas_rodas": voltas_mx, "pneus_c": pneus,
         "curvas": {tp: sorted(k for k, v in tipo.items() if v == tp) for tp in TIPOS},
         "freio": {"pico": _media(pico), "trail": _media(trail), "soltura_m": _media(soltura)},
         "acel": {"ate_total_m": _media(ate_total), "rampa": _media(rampa), "correcoes": _media(correc_acel)},
@@ -314,7 +319,8 @@ def sugestoes(p, setup, faixas=None, vel=None, so_campos=None):
     rodas = p.get("rodas") or {}
     rot = rotulos(p)
     problemas = []   # (gravidade, título, explicação, [(campo, sentido)])
-    pn = p.get("pneus") or {}
+    pn = p.get("pneus_c") or {}
+    frio = lambda x: (x.get("abaixo") or 0) >= FRIO and (x.get("aderencia") if x.get("aderencia") is not None else 0) < ADER_MIN
 
     def pressao(eixo):
         """Primeiro ajuste a olhar: a pressão do eixo, se o pneu dele estiver fora da janela de temperatura."""
@@ -322,7 +328,7 @@ def sugestoes(p, setup, faixas=None, vel=None, so_campos=None):
         campo = "front_left_tyre_pressure" if eixo == "diant" else "rear_left_tyre_pressure"
         if (x.get("acima") or 0) >= QUENTE:
             return [(campo, 1)]
-        if (x.get("abaixo") or 0) >= FRIO:
+        if frio(x):
             return [(campo, -1)]
         return []
 
@@ -331,8 +337,9 @@ def sugestoes(p, setup, faixas=None, vel=None, so_campos=None):
         nome = "dianteiros" if eixo == "diant" else "traseiros"
         if (x.get("acima") or 0) >= QUENTE:
             return f" Os pneus {nome} passaram {x['acima']:.0f}% do tempo acima da temperatura ideal: começa pela pressão."
-        if (x.get("abaixo") or 0) >= FRIO:
-            return f" Os pneus {nome} passaram {x['abaixo']:.0f}% do tempo abaixo da temperatura ideal: começa pela pressão."
+        if frio(x):
+            ad = f"{x.get('aderencia', 0):.1f}".replace(".", ",")
+            return f" Os pneus {nome} passaram {x['abaixo']:.0f}% do tempo abaixo da temperatura ideal (aderência média de {ad}%): começa pela pressão."
         return ""
     for tp in ("lenta", "media"):
         e, g = _estado(eq, "entrada", tp)
@@ -396,6 +403,7 @@ def sugestoes(p, setup, faixas=None, vel=None, so_campos=None):
             problemas.append(((x["acima"] / QUENTE) if quente else (x["abaixo"] / FRIO) * 0.7,
                               f"Pneus {nome} {'superaquecendo' if quente else 'frios'}",
                               f"{x['acima' if quente else 'abaixo']:.0f}% do tempo {'acima' if quente else 'abaixo'} da temperatura ideal"
+                              + ("" if quente else " (aderência média de " + f"{x.get('aderencia', 0):.1f}".replace(".", ",") + "%)")
                               + (": escorregam mais e gastam mais." if quente else ": menos aderência e mais travadas na freada."), alav))
     problemas.sort(key=lambda x: -x[0])
     out, usados = [], set()

@@ -12,6 +12,9 @@ import curvas
 
 # ---------------------------------------------------------------- limiares (ajustáveis)
 FREIO_LIGADO = 10          # % de freio que conta como início da freada
+CARGA_VOLANTE = 8          # volante (×100) acima disso = em curva (conta para a temperatura do pneu)
+CARGA_FREIO = 20           # % de freio acima disso = freando (idem)
+ADER_MIN = 98.0            # pneu só é "frio" se a aderência média cair abaixo disso (o jogo ainda mostra verde acima)
 ACEL_TOTAL = 95            # % de acelerador que conta como "acelerador total"
 DIF_FREADA_M = 10          # diferença mínima de ponto de freada para comentar (m)
 DIF_ACEL_M = 15            # diferença mínima de retomada para comentar (m)
@@ -304,9 +307,23 @@ def seu_resumo(D, apices_idx):
     comp_volta = {v["n"]: COMPOSTO.get(v.get("pneu_real")) for v in D["jogador_voltas"]}
     pit_volta = {v["n"]: bool(v.get("pit")) for v in D["jogador_voltas"]}
     com_temp = [t for t in meus if t.get("temp") and comp_volta.get(t["volta"])]
+    # janela de aderência pela temperatura da SUPERFÍCIE, contando só curvas e freadas (onde o pneu
+    # trabalha): nas retas a superfície esfria e puxaria a média para baixo sem o pneu perder nada.
+    def carga(t):
+        vol, fr = t.get("volante"), t.get("freio")
+        if not vol or not fr:
+            return list(range(len(t["temp"][0])))
+        idx = [i for i in range(min(len(vol), len(fr), len(t["temp"][0]))) if abs(vol[i]) > CARGA_VOLANTE or fr[i] > CARGA_FREIO]
+        return idx or list(range(len(t["temp"][0])))
+    pts = {}                                   # volta -> roda -> [(índice, temperatura)]
+    for t in com_temp:
+        idx = carga(t)
+        pts[t["volta"]] = [[(i, t["temp"][r][i]) for i in idx] for r in range(4)]
+    out["pneus_base"] = "superficie_curva"
     out["pneus_voltas"] = [{"n": t["volta"], "comp": comp_volta[t["volta"]], "pit": pit_volta.get(t["volta"], False),
-                            "media": [round(statistics.mean(t["temp"][r])) for r in range(4)],
-                            "min": [min(t["temp"][r]) for r in range(4)], "max": [max(t["temp"][r]) for r in range(4)]}
+                            "media": [round(statistics.mean(x for _, x in pts[t["volta"]][r])) for r in range(4)],
+                            "min": [min(x for _, x in pts[t["volta"]][r]) for r in range(4)],
+                            "max": [max(t["temp"][r]) for r in range(4)]}
                            for t in sorted(com_temp, key=lambda t: t["volta"])]
     grupos = {}
     for t in com_temp:
@@ -326,9 +343,9 @@ def seu_resumo(D, apices_idx):
         (jmin, jmax), (cmin, cmax) = janela(comp)
         vis = next((v.get("pneu_visual") for v in D["jogador_voltas"] if v["n"] == laps[0]["volta"]), None)
         g = {"composto": comp, "visual": vis, "janela": [jmin, jmax], "ideal": [cmin, cmax], "voltas": [t["volta"] for t in laps], "rodas": []}
-        quentes, frios = [], []
+        quentes, frios, frescos = [], [], []
         for r in range(4):
-            todas = [x for t in laps for x in t["temp"][r]]
+            todas = [x for t in laps for _, x in pts[t["volta"]][r]]
             if not todas:
                 continue
             tmax, vmax_, imax = max((x, t["volta"], i) for t in laps for i, x in enumerate(t["temp"][r]))
@@ -339,20 +356,24 @@ def seu_resumo(D, apices_idx):
             # onde fica mais frio (média por curva)
             por_curva = {}
             for t in laps:
-                for i, x in enumerate(t["temp"][r]):
+                for i, x in pts[t["volta"]][r]:
                     k = curva_de(min(i, n - 1))
                     if k:
                         por_curva.setdefault(k, []).append(x)
             k_frio = min(por_curva, key=lambda k: statistics.mean(por_curva[k])) if por_curva else None
+            ader = statistics.mean(aderencia(comp, x) for x in todas)
             g["rodas"].append({"roda": RODAS_C[r], "media": round(statistics.mean(todas)), "min": tmin, "max": tmax,
                                "volta_max": vmax_, "curva_max": curva_de(min(imax, n - 1)), "curva_fria": k_frio,
                                "abaixo": round(abaixo), "dentro": round(dentro), "acima": round(acima),
                                "abertura": laps[0]["temp"][r][0] if M["tipo"] != "corrida" else None,
-                               "aderencia_media": round(statistics.mean(aderencia(comp, x) for x in todas), 2)})
+                               "aderencia_media": round(ader, 2), "frio": abaixo >= 30 and ader < ADER_MIN,
+                               })
             if acima >= 20:
                 quentes.append((acima, r, tmax, curva_de(min(imax, n - 1))))
-            if abaixo >= 30:
+            if abaixo >= 30 and ader < ADER_MIN:      # frio só quando a perda de aderência é relevante
                 frios.append((abaixo, r, round(statistics.mean(todas)), k_frio))
+            elif abaixo >= 30:
+                frescos.append((r, round(ader, 1)))
         out["pneus_comp"].append(g)
         nome_c = f"{comp} ({len(laps)} volta{'s' if len(laps) > 1 else ''})"
         for acima, r, tmax, k in sorted(quentes, reverse=True):
@@ -387,7 +408,12 @@ def seu_resumo(D, apices_idx):
             txt += " Na pilotagem: freadas fortes e acelerações firmes aquecem os pneus."
             add("Pneus", txt)
         if not quentes and not frios:
-            add("Pneus", f"{nome_c}: temperatura dentro da janela ideal na maior parte do tempo.", "bom")
+            if frescos:
+                pior = min(a_ for _, a_ in frescos)
+                add("Pneus", f"{nome_c}: {'/'.join(RODAS_C[r] for r, _ in frescos)} um pouco abaixo da janela, mas com aderência média de "
+                    f"{str(pior).replace('.', ',')}% ou mais: perda pequena, não precisa mexer.", "bom")
+            else:
+                add("Pneus", f"{nome_c}: temperatura dentro da janela ideal na maior parte do tempo.", "bom")
     # classificação: temperatura na abertura da sua melhor volta
     comp = comp_volta.get(A["volta"])
     if comp and A.get("temp") and M["tipo"] != "corrida":

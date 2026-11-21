@@ -76,9 +76,12 @@ def passada1(caminho):
     pit_aberto = {}                     # carro -> parada em andamento
     paradas = defaultdict(list)         # carro -> [{volta, pit_lane_ms, parado_ms}]
     vmax_carro = defaultdict(int)       # velocidade máxima de cada carro com cronômetro rodando
+    vmax_volta_carro = defaultdict(dict)  # carro -> volta -> velocidade máxima na volta
+    saldo_carro = defaultdict(dict)     # carro -> volta -> saldo de combustível (voltas) no fim da volta
+    temp_carro = defaultdict(lambda: defaultdict(lambda: [0, [0, 0, 0, 0], [0, 0, 0, 0], 0]))  # carro -> volta -> [n, superfície em curva, núcleo, n em curva]
     avisos_carro = defaultdict(int)     # advertências de limite de pista
     setup_jog = None
-    acum = defaultdict(lambda: {"n": 0, "temp": [0, 0, 0, 0], "vmax": 0, "freio_t": [0, 0, 0, 0]})
+    acum = defaultdict(lambda: {"n": 0, "temp": [0, 0, 0, 0], "nucleo": [0, 0, 0, 0], "nc": 0, "curva": [0, 0, 0, 0], "vmax": 0, "freio_t": [0, 0, 0, 0]})
     vmax_sessao = 0
 
     sc_ult = 0
@@ -94,6 +97,7 @@ def passada1(caminho):
             sc_ = S.ler(status_bruto, c)
             if sc_[iS["fuel_in_tank"]] > 0:
                 comb_carro[c][ant] = round(sc_[iS["fuel_in_tank"]], 2)
+                saldo_carro[c][ant] = round(sc_[iS["fuel_remaining_laps"]], 2)
                 ers_carro[c][ant] = {"usado": sc_[iS["ers_deployed_this_lap"]], "fim": sc_[iS["ers_store_energy"]],
                                      "recup": sc_[iS["ers_harvested_this_lap_mguk"]] + sc_[iS["ers_harvested_this_lap_mguh"]]}
         if dano_bruto:
@@ -105,6 +109,9 @@ def passada1(caminho):
         s = {"volta": ant, "posicao": posicao, "vmax": a["vmax"]}
         if a["n"]:
             s["temp_pneus"] = [round(x / a["n"], 1) for x in a["temp"]]
+            s["temp_nucleo"] = [round(x / a["n"], 1) for x in a["nucleo"]]
+            if a["nc"]:
+                s["temp_curva"] = [round(x / a["nc"], 1) for x in a["curva"]]   # superfície só em curva/freada
             s["temp_freios"] = [round(x / a["n"]) for x in a["freio_t"]]
         if st_ult:
             s["combustivel"] = round(st_ult[iS["fuel_in_tank"]], 3)
@@ -199,6 +206,20 @@ def passada1(caminho):
                     (vc,) = VEL.unpack_from(dados, leitor.TAM_CAB + c * T.st.size)
                     if vc > vmax_carro[c] and vc < 420:
                         vmax_carro[c] = vc
+                    nvc = ul[iL["current_lap_num"]]
+                    if vc < 420 and vc > vmax_volta_carro[c].get(nvc, 0):
+                        vmax_volta_carro[c][nvc] = vc
+                    rc = T.ler(dados, c)
+                    nuc = [rc[iT[f"tyres_inner_temperature{k}"]] for k in range(4)]
+                    if all(nuc):                 # online, carro com telemetria fechada manda zero
+                        tc = temp_carro[c][nvc]
+                        tc[0] += 1
+                        for k in range(4):
+                            tc[2][k] += nuc[k]
+                        if abs(rc[iT["steer"]]) > 0.08 or rc[iT["brake"]] > 0.2:
+                            tc[3] += 1
+                            for k in range(4):
+                                tc[1][k] += rc[iT[f"tyres_surface_temperature{k}"]]
             r = T.ler(dados, jogador)
             nv = volta_atual.get(jogador)
             if nv:
@@ -206,6 +227,11 @@ def passada1(caminho):
                 a["n"] += 1
                 for k in range(4):
                     a["temp"][k] += r[iT[f"tyres_surface_temperature{k}"]]
+                    a["nucleo"][k] += r[iT[f"tyres_inner_temperature{k}"]]
+                if abs(r[iT["steer"]]) > 0.08 or r[iT["brake"]] > 0.2:
+                    a["nc"] += 1
+                    for k in range(4):
+                        a["curva"][k] += r[iT[f"tyres_surface_temperature{k}"]]
                     a["freio_t"][k] += r[iT[f"brakes_temperature{k}"]]
                 v = r[iT["speed"]]
                 if v > a["vmax"]:
@@ -323,7 +349,7 @@ def passada1(caminho):
                 pit_na_volta=pit_na_volta, tipo_volta=tipo_volta, grid=grid, speed_trap=speed_trap,
                 snap=snap, vmax=vmax_sessao, desgaste_carro=desgaste_carro, comb_inicial=comb_inicial,
                 ers_max=ers_max, lim_recup=lim_recup, bat_inicio=bat_inicio, ers_carro=ers_carro,
-                bat_ini_carro=bat_ini_carro, comb_carro=comb_carro, paradas=paradas, vmax_carro=vmax_carro, avisos_carro=avisos_carro, setup_jog=setup_jog, sc=sc_periodos, duracao_real=ultimo_t - (primeiro_t or 0))
+                bat_ini_carro=bat_ini_carro, comb_carro=comb_carro, saldo_carro=saldo_carro, vmax_volta_carro=vmax_volta_carro, temp_carro=temp_carro, paradas=paradas, vmax_carro=vmax_carro, avisos_carro=avisos_carro, setup_jog=setup_jog, sc=sc_periodos, duracao_real=ultimo_t - (primeiro_t or 0))
 
 
 # ---------------------------------------------------------------- passada 2
@@ -374,7 +400,9 @@ def passada2(caminho, voltas_quero, jogador_mx=None):
                 amostras[c].append((t, k[0], k[1], k[2], r[iT["speed"]], r[iT["throttle"]], r[iT["brake"]],
                                     r[iT["gear"]], r[iT["steer"]], ot.get(c, 0), k[3], modo.get(c, 0), bat.get(c, 0),
                                     (r[iT["tyres_surface_temperature0"]], r[iT["tyres_surface_temperature1"]],
-                                     r[iT["tyres_surface_temperature2"]], r[iT["tyres_surface_temperature3"]])))
+                                     r[iT["tyres_surface_temperature2"]], r[iT["tyres_surface_temperature3"]]),
+                                    (r[iT["tyres_inner_temperature0"]], r[iT["tyres_inner_temperature1"]],
+                                     r[iT["tyres_inner_temperature2"]], r[iT["tyres_inner_temperature3"]])))
         elif pid == 0:
             for c in carros:
                 k = cur.get(c)
@@ -635,6 +663,8 @@ def montar_traco(amostras, posicoes, volta, comprimento, passo, tempo_volta_ms, 
     if mx is not None:
         # temperatura da superfície dos 4 pneus (ordem do jogo: TE, TD, DE, DD)
         tr["temp"] = [[round(v) for v in _reamostrar(dist, [a[13][k] for a in lim], grade)] for k in range(4)]
+        # temperatura do núcleo (carcaça): é ela que o jogo usa para a janela de aderência
+        tr["temp_n"] = [[round(v) for v in _reamostrar(dist, [a[14][k] for a in lim], grade)] for k in range(4)]
         # pacote 13 (rodas): pontos esparsos, convertidos para distância pelo tempo
         pm = [m for m in mx if t_ini <= m[0] <= lim[-1][0]]
         if pm:
@@ -679,11 +709,24 @@ def _voltas_historico(h):
     return voltas
 
 
+def _juntar_stints(st):
+    """O jogo às vezes abre um stint de 1 volta com o mesmo pneu no meio da parada (ex.: duas
+    paradas seguidas na mesma equipe): médio até a 5, médio até a 6, duro. Junta esse pedaço ao
+    stint anterior (que mantém o próprio fim) para não aparecer um "stint 2" fantasma."""
+    out = []
+    for x in st:
+        if out and x["pneu"] == out[-1]["pneu"] and x["fim"] != 255 and x["fim"] - out[-1]["fim"] <= 1:
+            continue   # fica o fim do primeiro: a volta seguinte já é do pneu novo
+        else:
+            out.append(dict(x))
+    return out
+
+
 def _stints_historico(h):
     if h is None:
         return []
-    return [{"fim": s.end_lap, "pneu": s.tyre_visual_compound}
-            for s in list(h.tyre_stints_history_data)[:h.num_tyre_stints]]
+    return _juntar_stints([{"fim": s.end_lap, "pneu": s.tyre_visual_compound}
+                           for s in list(h.tyre_stints_history_data)[:h.num_tyre_stints]])
 
 
 def _inicio_sessao(caminho, duracao_s):
@@ -808,8 +851,8 @@ def analisar(caminho):
                 "melhor_ms": d.best_lap_time_in_ms, "tempo_total": round(d.total_race_time, 3),
                 "pits": d.num_pit_stops, "status": d.result_status, "pontos": d.points,
                 "penal_s": d.penalties_time, "n_penal": d.num_penalties,
-                "stints": [{"pneu": d.tyre_stints_visual[k], "fim": d.tyre_stints_end_laps[k]}
-                           for k in range(d.num_tyre_stints)],
+                "stints": _juntar_stints([{"pneu": d.tyre_stints_visual[k], "fim": d.tyre_stints_end_laps[k]}
+                                          for k in range(d.num_tyre_stints)]),
             })
         classif.sort(key=lambda x: x["pos"])
     else:
@@ -1019,6 +1062,12 @@ def analisar(caminho):
         "desgaste_trechos": desg_trechos,
         "paradas": {c: v for c, v in p1["paradas"].items() if c in carros and v},
         "comb_carro": {c: v for c, v in p1["comb_carro"].items() if c in carros and v},
+        "saldo_carro": {c: v for c, v in p1["saldo_carro"].items() if c in carros and v},
+        "vmax_volta_carro": {c: v for c, v in p1["vmax_volta_carro"].items() if c in carros and v},
+        "temp_curva_carro": {c: {n: [round(x / t[3], 1) for x in t[1]] for n, t in v.items() if t[3] >= 10}
+                             for c, v in p1["temp_carro"].items() if c in carros},
+        "temp_nucleo_carro": {c: {n: [round(x / t[0], 1) for x in t[2]] for n, t in v.items() if t[0] >= 20}
+                              for c, v in p1["temp_carro"].items() if c in carros},
         "pit_voltas": {c: sorted(p1["pit_na_volta"].get(c, ())) for c in carros if p1["pit_na_volta"].get(c)},
     }
     try:
@@ -1052,4 +1101,8 @@ def analisar(caminho):
     except Exception as ex:  # o resumo nunca pode impedir o relatório
         D["seu_resumo"] = {"aviso": f"Não foi possível montar as dicas: {ex}"}
     D["resumo_sessao"] = dicas.resumo_sessao(D)
+    # temperaturas ponto a ponto só servem para as contas acima; o relatório não usa (deixa o arquivo menor)
+    for tr in D.get("tracos") or []:
+        tr.pop("temp", None)
+        tr.pop("temp_n", None)
     return D
