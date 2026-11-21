@@ -25,6 +25,9 @@ LIMITES = {"front_wing": (0, 50, 2), "rear_wing": (0, 50, 2), "on_throttle": (10
            "front_anti_roll_bar": (1, 21, 2), "rear_anti_roll_bar": (1, 21, 2), "front_suspension": (1, 41, 3),
            "rear_suspension": (1, 41, 3), "brake_bias": (50, 70, 1), "brake_pressure": (80, 100, 2),
            "rear_left_tyre_pressure": (20.5, 26.5, 0.5), "front_left_tyre_pressure": (22.5, 29.5, 0.5)}
+# na classificação (parc fermé) só dá para mexer nisto
+CAMPOS_QUALI = {"front_wing", "on_throttle", "off_throttle", "brake_bias", "front_left_tyre_pressure", "rear_left_tyre_pressure"}
+QUENTE, FRIO = 20, 30       # % do tempo acima / abaixo da janela de temperatura para contar como pneu quente / frio
 NOMES = {"front_wing": "Asa dianteira", "rear_wing": "Asa traseira", "on_throttle": "Diferencial ao acelerar",
          "off_throttle": "Diferencial ao desacelerar", "front_anti_roll_bar": "Barra anti-rolagem dianteira",
          "rear_anti_roll_bar": "Barra anti-rolagem traseira", "front_suspension": "Suspensão dianteira",
@@ -43,14 +46,17 @@ POR_QUE = {
     ("rear_anti_roll_bar", 1): "barra traseira mais dura = carro gira mais no meio da curva",
     ("front_anti_roll_bar", -1): "barra dianteira mais macia = frente gira mais no meio da curva",
     ("front_wing", 1): "mais asa dianteira = mais entrada e rotação (o carro do F1 26 tende a sair de frente)",
-    ("rear_wing", 1): "mais asa traseira = traseira mais estável sem precisar de wheel flick; na reta pesa pouco porque a asa abre no modo reta. Quando ficar confiante, tire 5 por vez",
-    ("rear_wing", -1): "menos asa traseira = mais velocidade e rotação nas curvas rápidas; tire 5 por vez e pare quando a traseira começar a escapar",
+    ("rear_wing", 1): "mais asa traseira = traseira mais estável nas curvas; na reta pesa menos porque a asa abre no modo reta",
+    ("rear_wing", -1): "menos asa traseira = mais velocidade de reta; tire aos poucos e pare quando a traseira começar a escapar",
+    ("front_wing", -1): "menos asa dianteira = menos arrasto, mas a frente fica mais preguiçosa nas curvas",
     ("rear_suspension", 1): "traseira mais dura = mais rotação na entrada da curva",
     ("rear_suspension", -1): "traseira mais macia = menos rotação, carro mais calmo na entrada",
     ("front_suspension", -1): "frente mais macia = mais rotação na entrada da curva",
     ("brake_pressure", -1): "menos pressão = menos travada (os pros usam entre 97% e 100%)",
-    ("rear_left_tyre_pressure", -1): "pneu traseiro mais vazio = mais área de contato e tração (esquenta mais)",
-    ("front_left_tyre_pressure", -1): "pneu dianteiro mais vazio = mais aderência na frente (esquenta mais)",
+    ("rear_left_tyre_pressure", -1): "pneu traseiro mais vazio = mais área de contato: esquenta mais rápido e ganha tração (gasta um pouco mais)",
+    ("front_left_tyre_pressure", -1): "pneu dianteiro mais vazio = mais área de contato: esquenta mais rápido e ganha aderência na frente e na freada (gasta um pouco mais)",
+    ("rear_left_tyre_pressure", 1): "pneu traseiro mais cheio = esquenta menos e para de escorregar por superaquecimento; também gasta menos e ganha um pouco de reta",
+    ("front_left_tyre_pressure", 1): "pneu dianteiro mais cheio = esquenta menos e a frente para de escorregar por superaquecimento; também gasta menos",
 }
 PNEUS = {"rear_left_tyre_pressure": ("rear_left_tyre_pressure", "rear_right_tyre_pressure"),
          "front_left_tyre_pressure": ("front_left_tyre_pressure", "front_right_tyre_pressure")}
@@ -80,7 +86,7 @@ def metricas_sessao(D, apices):
         vm = statistics.median(min(t["v"][c["ini"]:c["fim"] + 1]) for t in voltas)
         tipo[c["k"]] = "lenta" if vm < LENTA else "rapida" if vm > RAPIDA else "media"
 
-    pico, trail, soltura, ate_total, rampa, correc_acel, correc_vol, flick = [], [], [], [], [], [], [], []
+    pico, trail, soltura, ate_total, rampa, correc_acel, correc_vol = [], [], [], [], [], [], []
     for t in voltas:
         for c in trs:
             ini, fim, ap = c["ini"], c["fim"], c["i"]
@@ -118,14 +124,6 @@ def metricas_sessao(D, apices):
             dv = [t["volante"][k + 1] - t["volante"][k] for k in range(ini, min(fim, n - 1))]
             dv = [d for d in dv if abs(d) >= 3]
             correc_vol.append(sum(1 for a, b in zip(dv, dv[1:]) if (a > 0) != (b > 0)))
-            # wheel flick: na entrada das curvas lentas/médias, um golpe de volante bem maior que o ângulo
-            # que sobra no ápice (provoca subesterço de propósito para segurar a traseira)
-            if tipo[c["k"]] != "rapida":
-                vol = [abs(t["volante"][k]) for k in range(ini, ap + 1)]
-                if vol:
-                    kp = max(range(len(vol)), key=lambda k: vol[k])
-                    pico_v, no_ap = vol[kp], vol[-1]
-                    flick.append(pico_v >= 25 and pico_v >= 1.6 * max(no_ap, 5) and (len(vol) - 1 - kp) * passo >= 20)
 
     # comportamento do carro (ângulos de deriva) e rodas (pacote 13)
     fases = {(tp, f): [] for tp in TIPOS for f in FASES}
@@ -178,12 +176,26 @@ def metricas_sessao(D, apices):
     por10 = lambda x: round(x * 10 / voltas_mx, 2) if voltas_mx else None
     if not voltas_mx:
         fases = {k: [] for k in fases}
+    # temperatura dos pneus por eixo (% do tempo acima/abaixo da janela), das contas do resumo
+    pneus = {}
+    comps = ((D.get("seu_resumo") or {}).get("pneus_comp")) or []
+    for eixo, rodas_ in (("diant", ("DE", "DD")), ("tras", ("TE", "TD"))):
+        acima, abaixo, peso = 0.0, 0.0, 0
+        for g in comps:
+            nv = len(g.get("voltas") or [])
+            for r in g.get("rodas") or []:
+                if r["roda"] in rodas_:
+                    acima += r["acima"] * nv
+                    abaixo += r["abaixo"] * nv
+                    peso += nv
+        if peso:
+            pneus[eixo] = {"acima": round(acima / peso, 1), "abaixo": round(abaixo / peso, 1)}
     return {
-        "voltas": len(voltas), "voltas_rodas": voltas_mx,
+        "voltas": len(voltas), "voltas_rodas": voltas_mx, "pneus": pneus,
         "curvas": {tp: sorted(k for k, v in tipo.items() if v == tp) for tp in TIPOS},
         "freio": {"pico": _media(pico), "trail": _media(trail), "soltura_m": _media(soltura)},
         "acel": {"ate_total_m": _media(ate_total), "rampa": _media(rampa), "correcoes": _media(correc_acel)},
-        "volante": {"correcoes": _media(correc_vol), "flick": round(100 * sum(flick) / len(flick), 1) if flick else None},
+        "volante": {"correcoes": _media(correc_vol)},
         "equilibrio": {tp: {f: (_media(fases[(tp, f)]) if len(fases[(tp, f)]) >= 8 else None) for f in FASES} for tp in TIPOS},
         "rodas": {"trava_d": por10(trav_d), "trava_t": por10(trav_t), "patina": por10(pat),
                   "patina_tipo": {tp: por10(v) for tp, v in pat_tipo.items()}},
@@ -225,19 +237,27 @@ def atualizar(D, metr):
             json.dump(dados, f, ensure_ascii=False)
     except OSError:
         pass
-    return perfil_medio(sess, M.get("pista"))
+    return perfil_medio(sess, M.get("pista"), M.get("tipo"))
 
 
-def perfil_medio(sess, pista=None):
-    """Média das sessões, com as recentes pesando mais. Se já houver sessões nesta pista, usa só elas;
-    sem nenhuma, usa todas as pistas."""
+def modo(tipo):
+    """Classificação (e Time Trial/treino) x corrida: o jeito de pilotar muda entre as duas."""
+    return "corrida" if tipo == "corrida" else "quali"
+
+
+def perfil_medio(sess, pista=None, tipo=None):
+    """Média das sessões, com as recentes pesando mais. Usa, nesta ordem, o que existir:
+    mesma pista e mesmo tipo (quali/corrida) > mesma pista > mesmo tipo em outras pistas > tudo."""
     ss = [s for s in sess if s.get("metricas")]
     if not ss:
         return None
-    mesma = [s for s in ss if pista and s.get("pista") == pista]
-    so_pista = bool(mesma)
-    if so_pista:
-        ss = mesma
+    md = modo(tipo) if tipo else None
+    niveis = [("pista_tipo", [s for s in ss if pista and md and s.get("pista") == pista and modo(s.get("tipo")) == md]),
+              ("pista", [s for s in ss if pista and s.get("pista") == pista]),
+              ("tipo", [s for s in ss if md and modo(s.get("tipo")) == md]),
+              ("tudo", ss)]
+    escopo, ss = next((n, l) for n, l in niveis if l)
+    so_pista = escopo in ("pista_tipo", "pista")
     n = len(ss)
     pesos = [PESO_IDADE ** (n - 1 - i) * min(1.0, (s["metricas"].get("voltas") or 1) / 5)
              * (PESO_PISTA if pista and s.get("pista") == pista else 1.0) for i, s in enumerate(ss)]
@@ -245,6 +265,8 @@ def perfil_medio(sess, pista=None):
     p["sessoes"] = n
     p["na_pista"] = sum(1 for s in ss if pista and s.get("pista") == pista)
     p["so_pista"] = so_pista
+    p["escopo"] = escopo
+    p["modo"] = md
     return p
 
 
@@ -264,8 +286,6 @@ def rotulos(p):
     if v.get("correcoes") is not None:
         out["volante"] = ("Muitas correções de volante dentro da curva" if v["correcoes"] >= 1.5 else
                           "Volante suave, poucas correções" if v["correcoes"] < 0.6 else "Algumas correções de volante")
-        if v.get("flick") is not None and v["flick"] >= 30:
-            out["volante"] += "; usa wheel flick na entrada"
     return out
 
 
@@ -286,7 +306,7 @@ def equilibrio_rotulado(p):
 
 
 # ---------------------------------------------------------------- ajustes de setup para o estilo
-def sugestoes(p, setup, faixas=None):
+def sugestoes(p, setup, faixas=None, vel=None, so_campos=None):
     """Até 4 ajustes a partir do setup atual. faixas: {campo: (min, max)} do que os profissionais usam."""
     if not p or not setup:
         return []
@@ -294,69 +314,104 @@ def sugestoes(p, setup, faixas=None):
     rodas = p.get("rodas") or {}
     rot = rotulos(p)
     problemas = []   # (gravidade, título, explicação, [(campo, sentido)])
+    pn = p.get("pneus") or {}
+
+    def pressao(eixo):
+        """Primeiro ajuste a olhar: a pressão do eixo, se o pneu dele estiver fora da janela de temperatura."""
+        x = pn.get(eixo) or {}
+        campo = "front_left_tyre_pressure" if eixo == "diant" else "rear_left_tyre_pressure"
+        if (x.get("acima") or 0) >= QUENTE:
+            return [(campo, 1)]
+        if (x.get("abaixo") or 0) >= FRIO:
+            return [(campo, -1)]
+        return []
+
+    def temp_txt(eixo):
+        x = pn.get(eixo) or {}
+        nome = "dianteiros" if eixo == "diant" else "traseiros"
+        if (x.get("acima") or 0) >= QUENTE:
+            return f" Os pneus {nome} passaram {x['acima']:.0f}% do tempo acima da temperatura ideal: começa pela pressão."
+        if (x.get("abaixo") or 0) >= FRIO:
+            return f" Os pneus {nome} passaram {x['abaixo']:.0f}% do tempo abaixo da temperatura ideal: começa pela pressão."
+        return ""
     for tp in ("lenta", "media"):
         e, g = _estado(eq, "entrada", tp)
         if e == "sobre":
             extra = " Como você solta o freio já virando, a traseira fica leve na entrada." if (p.get("freio") or {}).get("trail", 0) >= 35 else ""
-            problemas.append((g * 100, f"Traseira solta na entrada das curvas {'lentas' if tp == 'lenta' else 'médias'}", "O carro gira demais na freada." + extra,
-                              [("brake_bias", 1), ("off_throttle", 1)]))
+            problemas.append((g * 100, f"Traseira solta na entrada das curvas {'lentas' if tp == 'lenta' else 'médias'}", "O carro gira demais na freada." + extra + temp_txt("tras"),
+                              pressao("tras") + [("brake_bias", 1), ("off_throttle", 1)]))
         e, g = _estado(eq, "saida", tp)
         if e == "sobre":
             extra = " Você acelera cedo e forte, o que pede mais tração." if "agressivo" in rot.get("acel", "") else ""
-            problemas.append((g * 100, f"Traseira solta na saída das curvas {'lentas' if tp == 'lenta' else 'médias'}", "A traseira escorrega ao acelerar." + extra,
-                              [("rear_anti_roll_bar", -1), ("on_throttle", 1), ("rear_left_tyre_pressure", -1)]))
+            problemas.append((g * 100, f"Traseira solta na saída das curvas {'lentas' if tp == 'lenta' else 'médias'}", "A traseira escorrega ao acelerar." + extra + temp_txt("tras"),
+                              pressao("tras") + [("rear_anti_roll_bar", -1), ("on_throttle", 1)]))
         x = ((eq.get(tp) or {}).get("entrada"))
         if x is not None and x > dicas.SUB_MEIO:
             problemas.append(((x - dicas.SUB_MEIO) * 60, f"Demora a virar na entrada das curvas {'lentas' if tp == 'lenta' else 'médias'}",
-                              "A frente não responde no começo da curva.", [("rear_suspension", 1), ("front_suspension", -1), ("front_wing", 1)]))
+                              "A frente não responde no começo da curva." + temp_txt("diant"),
+                              pressao("diant") + [("rear_suspension", 1), ("front_suspension", -1), ("front_wing", 1)]))
         e, g = _estado(eq, "meio", tp)
         if e == "sub":
-            problemas.append((g * 60, f"Sai de frente no meio das curvas {'lentas' if tp == 'lenta' else 'médias'}", "A frente escorrega mais que a traseira.",
-                              [("front_wing", 1), ("front_anti_roll_bar", -1), ("rear_anti_roll_bar", 1)]))
+            problemas.append((g * 60, f"Sai de frente no meio das curvas {'lentas' if tp == 'lenta' else 'médias'}", "A frente escorrega mais que a traseira." + temp_txt("diant"),
+                              pressao("diant") + [("front_wing", 1), ("front_anti_roll_bar", -1), ("rear_anti_roll_bar", 1)]))
     e, g = _estado(eq, "meio", "rapida")
     if e == "sub":
-        problemas.append((g * 60, "Sai de frente nas curvas rápidas", "Falta aderência na frente em alta velocidade.", [("front_wing", 1)]))
+        problemas.append((g * 60, "Sai de frente nas curvas rápidas", "Falta aderência na frente em alta velocidade." + temp_txt("diant"), pressao("diant") + [("front_wing", 1)]))
     elif e == "sobre":
-        problemas.append((g * 100, "Traseira instável nas curvas rápidas", "A traseira escorrega em alta velocidade.", [("rear_wing", 1), ("rear_anti_roll_bar", -1)]))
+        problemas.append((g * 100, "Traseira instável nas curvas rápidas", "A traseira escorrega em alta velocidade." + temp_txt("tras"), pressao("tras") + [("rear_wing", 1), ("rear_anti_roll_bar", -1)]))
     if (rodas.get("trava_d") or 0) >= 3:
-        problemas.append((rodas["trava_d"] / 3, "Trava a dianteira na freada", f"Cerca de {rodas['trava_d']:.0f} travadas da frente a cada 10 voltas.",
-                          [("brake_bias", -1), ("brake_pressure", -1)]))
+        problemas.append((rodas["trava_d"] / 3, "Trava a dianteira na freada", f"Cerca de {rodas['trava_d']:.0f} travadas da frente a cada 10 voltas." + temp_txt("diant"),
+                          pressao("diant") + [("brake_bias", -1), ("brake_pressure", -1)]))
     if (rodas.get("trava_t") or 0) >= 3:
-        problemas.append((rodas["trava_t"] / 3, "Trava a traseira na freada", f"Cerca de {rodas['trava_t']:.0f} travadas de trás a cada 10 voltas.",
-                          [("brake_bias", 1), ("off_throttle", 1)]))
+        problemas.append((rodas["trava_t"] / 3, "Trava a traseira na freada", f"Cerca de {rodas['trava_t']:.0f} travadas de trás a cada 10 voltas." + temp_txt("tras"),
+                          pressao("tras") + [("brake_bias", 1), ("off_throttle", 1)]))
     if (rodas.get("patina") or 0) >= 5 and not any("saída" in x[1] for x in problemas):
-        problemas.append((rodas["patina"] / 5, "Patina na saída das curvas", f"Cerca de {rodas['patina']:.0f} patinadas a cada 10 voltas.",
-                          [("rear_anti_roll_bar", -1), ("on_throttle", 1), ("rear_left_tyre_pressure", -1)]))
-    # asa traseira: os setups esports (asa traseira bem baixa) pedem wheel flick na entrada.
-    # Sem flick e com o carro nervoso, mais asa traseira estabiliza; quando o carro está calmo, tirar aos poucos
-    vol = p.get("volante") or {}
-    sem_flick = (vol.get("flick") or 0) < 20
-    nervoso = any(_estado(eq, f, tp)[0] == "sobre" for tp in ("lenta", "media") for f in ("entrada", "meio")) \
-        or (vol.get("correcoes") or 0) >= 1.5 or (((rodas.get("patina_tipo") or {}).get("lenta")) or 0) >= 15
-    calmo = all(_estado(eq, f, tp)[0] in ("ok", None) for tp in TIPOS for f in FASES) \
-        and (vol.get("correcoes") or 9) < 1.0 and (rodas.get("patina") or 0) < 8
-    if nervoso and sem_flick:
-        problemas.append((1.5, "Traseira nervosa nas curvas lentas e médias",
-                          "Os setups esports usam pouca asa traseira e contam com o wheel flick na entrada, que você quase não usa.",
-                          [("rear_wing", 1, 5, "livre")]))
-    elif calmo:
-        problemas.append((0.5, "Carro calmo: dá para ganhar velocidade",
-                          "Traseira estável e poucas correções: tire asa traseira aos poucos até o carro começar a escapar.",
-                          [("rear_wing", -1, 5)]))
+        problemas.append((rodas["patina"] / 5, "Patina na saída das curvas", f"Cerca de {rodas['patina']:.0f} patinadas a cada 10 voltas." + temp_txt("tras"),
+                          pressao("tras") + [("rear_anti_roll_bar", -1), ("on_throttle", 1)]))
+    # asa traseira: decidida pela estabilidade da traseira e pela velocidade de reta contra os rivais
+    for tp in ("lenta", "media"):
+        e, g = _estado(eq, "meio", tp)
+        if e == "sobre":
+            problemas.append((g * 100, f"Traseira escapa no meio das curvas {'lentas' if tp == 'lenta' else 'médias'}",
+                              "A traseira desliza com o carro apoiado na curva." + temp_txt("tras"),
+                              pressao("tras") + [("rear_anti_roll_bar", -1), ("rear_wing", 1)]))
+    instavel = any(_estado(eq, f, tp)[0] == "sobre" for tp in TIPOS for f in ("entrada", "meio"))
+    if vel and vel.get("meu") and vel.get("rivais"):
+        dif = vel["meu"] - vel["rivais"]
+        if dif <= -6 and not instavel:
+            problemas.append((abs(dif) / 6, "Lento nas retas",
+                              f"Sua velocidade máxima foi {vel['meu']:.0f} km/h, {abs(dif):.0f} km/h abaixo da mediana dos rivais, e a traseira está estável.",
+                              [("rear_wing", -1), ("front_wing", -1)]))
+        elif dif >= 6 and instavel:
+            problemas.append((dif / 6, "Rápido na reta, mas a traseira escapa",
+                              f"Você foi {dif:.0f} km/h mais rápido que a mediana dos rivais na reta: dá para trocar um pouco disso por estabilidade.",
+                              [("rear_wing", 1)]))
+    # pneu fora da janela mesmo sem problema de equilíbrio: aquece/esfria demais e gasta mais
+    for eixo in ("diant", "tras"):
+        alav = pressao(eixo)
+        if alav and not any(alav[0] in x[3] for x in problemas):
+            x = pn[eixo]
+            quente = alav[0][1] > 0
+            nome = "dianteiros" if eixo == "diant" else "traseiros"
+            problemas.append(((x["acima"] / QUENTE) if quente else (x["abaixo"] / FRIO) * 0.7,
+                              f"Pneus {nome} {'superaquecendo' if quente else 'frios'}",
+                              f"{x['acima' if quente else 'abaixo']:.0f}% do tempo {'acima' if quente else 'abaixo'} da temperatura ideal"
+                              + (": escorregam mais e gastam mais." if quente else ": menos aderência e mais travadas na freada."), alav))
     problemas.sort(key=lambda x: -x[0])
     out, usados = [], set()
     for g, titulo, expl, alavancas in problemas:
+        bloqueado = False
         for alav in alavancas:
             campo, sentido = alav[0], alav[1]
+            if so_campos and campo not in so_campos:
+                bloqueado = True
+                continue
             if campo in usados or campo not in LIMITES or not isinstance(setup.get(campo), (int, float)):
                 continue
             lo, hi, passo = LIMITES[campo]
             if len(alav) > 2:
                 passo = alav[2]
             fx = (faixas or {}).get(campo)
-            livre = len(alav) > 3 and alav[3] == "livre"     # o vídeo manda passar do que os pros usam (eles fazem flick)
-            if fx and livre:
-                fx = None
             if fx:
                 lo, hi = max(lo, fx[0]), min(hi, fx[1])
             atual = setup[campo]
@@ -369,7 +424,10 @@ def sugestoes(p, setup, faixas=None):
             break
         else:
             out.append({"problema": titulo, "explicacao": expl, "campo": None,
-                        "nota": "Os ajustes que ajudariam já estão no limite" + (" do que os profissionais usam" if faixas else "") + ": compense na pilotagem."})
+                        "nota": ("Na classificação só dá para mexer em asa dianteira, diferencial, distribuição de freio e pressão dos pneus, "
+                                 "e esses já estão no limite: o que resolveria isso é do setup de base (barras, suspensão, asa traseira)."
+                                 if bloqueado else
+                                 "Os ajustes que ajudariam já estão no limite" + (" do que os profissionais usam" if faixas else "") + ": compense na pilotagem.")})
         if len(out) >= 4:
             break
     return out
@@ -405,7 +463,15 @@ def montar(D, apices):
         return None
     perfil = atualizar(D, metr)
     fx = faixas_ref(D.get("setup_ref"))
+    vel = None
+    vm = D.get("vmax_carro") or {}
+    J = D["meta"]["jogador"]
+    meu = vm.get(J) or vm.get(str(J))
+    outros = sorted(v for c, v in vm.items() if str(c) != str(J) and v and v > 100)
+    if meu and len(outros) >= 3:
+        vel = {"meu": meu, "rivais": outros[len(outros) // 2]}
     return {"sessao": metr, "perfil": perfil, "rotulos": rotulos(perfil), "rotulos_sessao": rotulos(metr),
             "equilibrio": equilibrio_rotulado(perfil), "equilibrio_sessao": equilibrio_rotulado(metr),
-            "sugestoes": sugestoes(perfil, D.get("setup"), fx), "com_faixas": bool(fx),
+            "sugestoes": sugestoes(perfil, D.get("setup"), fx, vel, CAMPOS_QUALI if modo(D["meta"].get("tipo")) == "quali" else None),
+            "so_quali": modo(D["meta"].get("tipo")) == "quali", "velocidade": vel, "com_faixas": bool(fx),
             "faixa_pista": bool(D.get("setup_ref"))}

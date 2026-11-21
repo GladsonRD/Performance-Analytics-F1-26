@@ -2177,17 +2177,17 @@ function energiaComparada(s) {
 // ------------------------------------------------------------ seu estilo (perfil de pilotagem)
 if (D.estilo && !D.estilo.aviso && D.estilo.perfil) {
   const E = D.estilo, P = E.perfil, S = E.sessao;
-  const s = sec('estilo', 'Seu estilo', `Como você pilota, medido nas suas voltas. O <b>perfil</b> junta as suas sessões ${P.so_pista ? '<b>nesta pista</b>' : 'de <b>todas as pistas</b> (você ainda não tem sessão gravada nesta)'}, com as mais recentes pesando mais, e fica salvo só no seu PC; <b>esta sessão</b> mostra só as voltas deste relatório.${P.sessoes < 5 ? ` <span class="ruim">Perfil ainda em formação (${P.sessoes} ${P.sessoes === 1 ? 'sessão' : 'sessões'}): fica confiável a partir de 5.</span>` : ''}`);
+  const s = sec('estilo', 'Seu estilo', `Como você pilota, medido nas suas voltas. O <b>perfil</b> junta as suas sessões ${({ pista_tipo: `<b>de ${P.modo === 'corrida' ? 'corrida' : 'classificação'} nesta pista</b>`, pista: `<b>nesta pista</b> (ainda não tem ${P.modo === 'corrida' ? 'corrida' : 'classificação'} gravada aqui, então entram as outras sessões da pista)`, tipo: `<b>de ${P.modo === 'corrida' ? 'corrida' : 'classificação'} em outras pistas</b> (ainda não tem sessão gravada nesta)`, tudo: '<b>de todas as pistas</b>' })[P.escopo] || '<b>de todas as pistas</b>'}, com as mais recentes pesando mais, e fica salvo só no seu PC; <b>esta sessão</b> mostra só as voltas deste relatório.${P.sessoes < 5 ? ` <span class="ruim">Perfil ainda em formação (${P.sessoes} ${P.sessoes === 1 ? 'sessão' : 'sessões'}): fica confiável a partir de 5.</span>` : ''}`);
   const f1 = (x, c = 0, un = '') => x == null ? '—' : Number(x).toFixed(c).replace('.', ',') + un;
   const g = $('<div class="grade2"></div>'); s.appendChild(g);
   // como você pilota
   const linhas = [
     ['Freada', E.rotulos.freio, [['pressão máxima do freio', P.freio.pico, S.freio.pico, 0, '%'], ['da freada já virando o volante', P.freio.trail, S.freio.trail, 0, '%'], ['do pico do freio até soltar', P.freio.soltura_m, S.freio.soltura_m, 0, ' m']]],
     ['Aceleração', E.rotulos.acel, [['do ponto mais lento ao acelerador total', P.acel.ate_total_m, S.acel.ate_total_m, 0, ' m'], ['do 10% ao acelerador total', P.acel.rampa ? 8500 / P.acel.rampa : null, S.acel.rampa ? 8500 / S.acel.rampa : null, 0, ' m'], ['vezes que tira o pé de novo, por curva', P.acel.correcoes, S.acel.correcoes, 2, '']]],
-    ['Volante', E.rotulos.volante, [['correções de volante por curva', P.volante.correcoes, S.volante.correcoes, 1, ''], ['entradas com wheel flick (curvas lentas e médias)', P.volante.flick, S.volante.flick, 0, '%']]],
+    ['Volante', E.rotulos.volante, [['correções de volante por curva', P.volante.correcoes, S.volante.correcoes, 1, '']]],
   ];
   const c1 = card(g, `<h3 style="margin:0 0 8px;font-size:15px">Como você pilota</h3>`);
-  c1.appendChild($(`<div class="tab-wrap"><table class="compacta"><thead><tr><th></th><th class="num">${P.so_pista ? `Perfil nesta pista (${P.sessoes})` : `Perfil geral (${P.sessoes})`}</th><th class="num">Esta sessão</th></tr></thead><tbody>${linhas.map(([tit, rot, xs]) =>
+  c1.appendChild($(`<div class="tab-wrap"><table class="compacta"><thead><tr><th></th><th class="num">Perfil (${P.sessoes})</th><th class="num">Esta sessão</th></tr></thead><tbody>${linhas.map(([tit, rot, xs]) =>
     `<tr><td colspan="3" style="padding-top:10px"><b>${tit}</b>${rot ? ` · <span style="color:var(--s1)">${esc(rot)}</span>` : ''}</td></tr>` +
     xs.map(([r, p, se, c, un]) => `<tr><td style="padding-left:14px">${r}</td><td class="num"><b>${f1(p, c, un)}</b></td><td class="num fraco">${f1(se, c, un)}</td></tr>`).join('')).join('')}</tbody></table></div>`));
 
@@ -2230,7 +2230,7 @@ if (D.estilo && !D.estilo.aviso && D.estilo.perfil) {
   }
 
   // ajustes de setup para o estilo
-  const c3 = card(s, `<h3 style="margin:0 0 4px;font-size:15px">Ajustes de setup para o seu estilo</h3><p class="desc" style="margin-bottom:6px">A partir do setup que você usou nesta sessão e do seu perfil${E.faixa_pista ? ', dentro da faixa que os profissionais usam nesta pista' : E.com_faixas ? ', dentro do que os setups esports usam no F1 26' : ''}. Mude <b>um ajuste por vez</b>, corra de novo e veja no próximo relatório se o problema diminuiu; se piorar, teste o outro sentido.</p>`);
+  const c3 = card(s, `<h3 style="margin:0 0 4px;font-size:15px">Ajustes de setup para o seu estilo</h3><p class="desc" style="margin-bottom:6px">${E.so_quali ? '<b>Classificação:</b> só entram os ajustes que dá para mudar com parc fermé (asa dianteira, diferencial, distribuição de freio e pressão dos pneus). ' : ''}A partir do setup que você usou nesta sessão e do seu perfil${E.faixa_pista ? ', dentro da faixa que os profissionais usam nesta pista' : E.com_faixas ? ', dentro do que os setups esports usam no F1 26' : ''}. Mude <b>um ajuste por vez</b>, corra de novo e veja no próximo relatório se o problema diminuiu; se piorar, teste o outro sentido.</p>`);
   c3.style.marginTop = '14px';
   if (!D.setup) c3.appendChild($('<p class="fraco">A gravação não pegou o setup desta sessão, então não dá para sugerir ajustes.</p>'));
   else if (!E.sugestoes.length) c3.appendChild($('<p class="bom">Nada claro para mudar: o carro está equilibrado para o seu jeito de pilotar.</p>'));
