@@ -15,6 +15,7 @@ import dicas
 ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "perfil_piloto.json")
 MAX_SESSOES = 40
 PESO_IDADE = 0.85          # cada sessão mais antiga vale 85% da seguinte
+PESO_PISTA = 1.0           # (com sessões na pista, o perfil usa só elas)
 TIPOS = ("lenta", "media", "rapida")
 FASES = ("entrada", "meio", "saida")
 LENTA, RAPIDA = 120, 200   # km/h na velocidade mínima da curva
@@ -224,16 +225,26 @@ def atualizar(D, metr):
             json.dump(dados, f, ensure_ascii=False)
     except OSError:
         pass
-    return perfil_medio(sess)
+    return perfil_medio(sess, M.get("pista"))
 
 
-def perfil_medio(sess):
-    ms = [s["metricas"] for s in sess if s.get("metricas")]
-    if not ms:
+def perfil_medio(sess, pista=None):
+    """Média das sessões, com as recentes pesando mais. Se já houver sessões nesta pista, usa só elas;
+    sem nenhuma, usa todas as pistas."""
+    ss = [s for s in sess if s.get("metricas")]
+    if not ss:
         return None
-    pesos = [PESO_IDADE ** (len(ms) - 1 - i) * min(1.0, (m.get("voltas") or 1) / 5) for i, m in enumerate(ms)]
-    p = _junta(ms, pesos)
-    p["sessoes"] = len(ms)
+    mesma = [s for s in ss if pista and s.get("pista") == pista]
+    so_pista = bool(mesma)
+    if so_pista:
+        ss = mesma
+    n = len(ss)
+    pesos = [PESO_IDADE ** (n - 1 - i) * min(1.0, (s["metricas"].get("voltas") or 1) / 5)
+             * (PESO_PISTA if pista and s.get("pista") == pista else 1.0) for i, s in enumerate(ss)]
+    p = _junta([s["metricas"] for s in ss], pesos)
+    p["sessoes"] = n
+    p["na_pista"] = sum(1 for s in ss if pista and s.get("pista") == pista)
+    p["so_pista"] = so_pista
     return p
 
 

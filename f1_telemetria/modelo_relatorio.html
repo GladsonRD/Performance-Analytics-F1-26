@@ -2177,7 +2177,7 @@ function energiaComparada(s) {
 // ------------------------------------------------------------ seu estilo (perfil de pilotagem)
 if (D.estilo && !D.estilo.aviso && D.estilo.perfil) {
   const E = D.estilo, P = E.perfil, S = E.sessao;
-  const s = sec('estilo', 'Seu estilo', `Como você pilota, medido nas suas voltas. O <b>perfil</b> junta as suas últimas sessões (as mais recentes pesam mais) e fica salvo só no seu PC; <b>esta sessão</b> mostra só as voltas deste relatório.${P.sessoes < 5 ? ` <span class="ruim">Perfil ainda em formação (${P.sessoes} ${P.sessoes === 1 ? 'sessão' : 'sessões'}): fica confiável a partir de 5.</span>` : ''}`);
+  const s = sec('estilo', 'Seu estilo', `Como você pilota, medido nas suas voltas. O <b>perfil</b> junta as suas sessões ${P.so_pista ? '<b>nesta pista</b>' : 'de <b>todas as pistas</b> (você ainda não tem sessão gravada nesta)'}, com as mais recentes pesando mais, e fica salvo só no seu PC; <b>esta sessão</b> mostra só as voltas deste relatório.${P.sessoes < 5 ? ` <span class="ruim">Perfil ainda em formação (${P.sessoes} ${P.sessoes === 1 ? 'sessão' : 'sessões'}): fica confiável a partir de 5.</span>` : ''}`);
   const f1 = (x, c = 0, un = '') => x == null ? '—' : Number(x).toFixed(c).replace('.', ',') + un;
   const g = $('<div class="grade2"></div>'); s.appendChild(g);
   // como você pilota
@@ -2187,7 +2187,7 @@ if (D.estilo && !D.estilo.aviso && D.estilo.perfil) {
     ['Volante', E.rotulos.volante, [['correções de volante por curva', P.volante.correcoes, S.volante.correcoes, 1, ''], ['entradas com wheel flick (curvas lentas e médias)', P.volante.flick, S.volante.flick, 0, '%']]],
   ];
   const c1 = card(g, `<h3 style="margin:0 0 8px;font-size:15px">Como você pilota</h3>`);
-  c1.appendChild($(`<div class="tab-wrap"><table class="compacta"><thead><tr><th></th><th class="num">Perfil (${P.sessoes})</th><th class="num">Esta sessão</th></tr></thead><tbody>${linhas.map(([tit, rot, xs]) =>
+  c1.appendChild($(`<div class="tab-wrap"><table class="compacta"><thead><tr><th></th><th class="num">${P.so_pista ? `Perfil nesta pista (${P.sessoes})` : `Perfil geral (${P.sessoes})`}</th><th class="num">Esta sessão</th></tr></thead><tbody>${linhas.map(([tit, rot, xs]) =>
     `<tr><td colspan="3" style="padding-top:10px"><b>${tit}</b>${rot ? ` · <span style="color:var(--s1)">${esc(rot)}</span>` : ''}</td></tr>` +
     xs.map(([r, p, se, c, un]) => `<tr><td style="padding-left:14px">${r}</td><td class="num"><b>${f1(p, c, un)}</b></td><td class="num fraco">${f1(se, c, un)}</td></tr>`).join('')).join('')}</tbody></table></div>`));
 
