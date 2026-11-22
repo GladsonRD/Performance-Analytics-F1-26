@@ -76,8 +76,10 @@ class Gravador:
     """Escuta o UDP numa thread. Avisa o que acontece por callbacks."""
 
     def __init__(self, porta=20777, pasta_saida=None, abrir=True, ao_log=print, ao_relatorio=None, ao_estado=None,
-                 ao_info=None):
+                 ao_info=None, repassar=0):
         self.porta = porta
+        # repassa cada pacote para outra porta deste PC (outro app de telemetria, ex.: Felix Conector)
+        self.repassar = repassar if repassar and repassar != porta else 0
         self.pasta_saida = pasta_saida or relatorio.pasta_padrao()
         self.abrir = abrir
         self.ao_log = ao_log
@@ -158,6 +160,11 @@ class Gravador:
             self.ao_estado("Erro: porta em uso")
             return False
         sock.settimeout(0.5)
+        saida = None
+        if self.repassar:
+            saida = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            destino = ("127.0.0.1", self.repassar)
+            self.log(f"Repassando os dados do jogo para a porta {self.repassar} (outro programa de telemetria).")
         self.log(f"Escutando na porta {self.porta}. Relatórios em: {self.pasta_saida}")
         self.ao_estado("Aguardando o jogo...")
 
@@ -174,6 +181,11 @@ class Gravador:
                     dados = None
                 except ConnectionResetError:
                     continue
+                if dados and saida:
+                    try:
+                        saida.sendto(dados, destino)
+                    except OSError:
+                        pass   # o outro programa fechado não pode atrapalhar a gravação
 
                 agora = time.time()
                 s = self.sessao
@@ -267,11 +279,13 @@ class Gravador:
 def main():
     ap = argparse.ArgumentParser(description="Gravador de telemetria do F1 26")
     ap.add_argument("--porta", type=int, default=None)
+    ap.add_argument("--repassar", type=int, default=None, help="repassa os pacotes para esta porta (outro app)")
     ap.add_argument("--saida", help="pasta dos relatórios (padrão: a escolhida no painel)")
     ap.add_argument("--nao-abrir", action="store_true", help="não abrir o relatório no navegador")
     a = ap.parse_args()
     cfg = relatorio.ler_config()
-    g = Gravador(porta=a.porta or cfg.get("porta", 20777), pasta_saida=a.saida, abrir=not a.nao_abrir)
+    g = Gravador(porta=a.porta or cfg.get("porta", 20777), pasta_saida=a.saida, abrir=not a.nao_abrir,
+                 repassar=a.repassar if a.repassar is not None else cfg.get("repassar", 0))
     t = threading.Thread(target=g.rodar)
     t.start()
     try:

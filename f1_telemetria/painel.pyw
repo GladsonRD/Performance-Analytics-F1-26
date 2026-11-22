@@ -250,6 +250,7 @@ class Painel:
         self.var_pasta = tk.StringVar(value=self.cfg.get("pasta_saida", ""))
         self.var_abrir = tk.BooleanVar(value=self.cfg.get("abrir", True))
         self.var_porta = tk.StringVar(value=str(self.cfg.get("porta", 20777)))
+        self.var_repassar = tk.StringVar(value=str(self.cfg.get("repassar") or ""))
 
         # janela com cantos arredondados: o fundo da janela vira transparente e o cartão é desenhado arredondado
         if self.sem_moldura and (sys.platform.startswith("win") or os.environ.get("PA_ARREDONDAR")):
@@ -462,6 +463,10 @@ class Painel:
             while True:
                 try:
                     c, _ = sock.accept()
+                    try:
+                        c.sendall(SENHA_INSTANCIA)
+                    except OSError:
+                        pass
                     c.close()
                     self.fila.put(("mostrar", None))
                 except Exception:  # noqa: BLE001
@@ -609,6 +614,14 @@ class Painel:
         rotulo(lpo, "Porta UDP:", 10).pack(side="left", padx=(0, 8))
         tk.Entry(lpo, textvariable=self.var_porta, width=8, bg=HOVER, fg=TEXTO, insertbackground=TEXTO, relief="flat", highlightthickness=1, highlightbackground=BORDA).pack(side="left", ipady=2)
         rotulo(lpo, "(a mesma do jogo; padrão 20777)", 9, cor=APAGADO).pack(side="left", padx=(8, 0))
+        lrp = tk.Frame(c, bg=CARTAO)
+        lrp.pack(anchor="w", pady=(10, 0))
+        rotulo(lrp, "Repassar para a porta:", 10).pack(side="left", padx=(0, 8))
+        tk.Entry(lrp, textvariable=self.var_repassar, width=8, bg=HOVER, fg=TEXTO, insertbackground=TEXTO, relief="flat", highlightthickness=1, highlightbackground=BORDA).pack(side="left", ipady=2)
+        rotulo(lrp, "(vazio = desligado)", 9, cor=APAGADO).pack(side="left", padx=(8, 0))
+        rotulo(c, "Para usar junto com outro programa de telemetria (ex.: Felix Conector): coloque aqui a porta dele, "
+                  "como 20778, e configure o outro programa para escutar essa porta. Vale ao clicar em Parar e Iniciar.", 9,
+               cor=APAGADO, wraplength=420, justify="left").pack(anchor="w", pady=(4, 0))
 
         def ok():
             self.salvar_cfg()
@@ -627,6 +640,8 @@ class Painel:
             self.cfg["porta"] = int(self.var_porta.get())
         except ValueError:
             pass
+        rp = self.var_repassar.get().strip()
+        self.cfg["repassar"] = int(rp) if rp.isdigit() and 1024 <= int(rp) <= 65535 else 0
         relatorio.salvar_config(self.cfg)
 
     def escolher_pasta(self, pai=None):
@@ -741,7 +756,7 @@ class Painel:
         self.salvar_cfg()
         os.makedirs(self.var_pasta.get(), exist_ok=True)
         self.gravador = Gravador(
-            porta=porta, pasta_saida=self.var_pasta.get(), abrir=self.var_abrir.get(),
+            porta=porta, pasta_saida=self.var_pasta.get(), abrir=self.var_abrir.get(), repassar=self.cfg.get("repassar", 0),
             ao_log=lambda m: self.fila.put(("log", m)),
             ao_relatorio=lambda c: self.fila.put(("rel", c)),
             ao_estado=lambda e: self.fila.put(("estado", e)),
@@ -843,7 +858,8 @@ class Painel:
         os._exit(0)
 
 
-PORTA_INSTANCIA = 47826
+PORTA_INSTANCIA = 52687   # a 47826 é usada pela janela do Felix Conector: um impedia o outro de abrir
+SENHA_INSTANCIA = b"PAF1"
 
 
 def main():
@@ -853,15 +869,23 @@ def main():
         sock.bind(("127.0.0.1", PORTA_INSTANCIA))
         sock.listen(2)
     except OSError:
+        # porta ocupada: só fecha se quem está nela for mesmo outra cópia deste programa
+        nosso = False
         try:
-            socket.create_connection(("127.0.0.1", PORTA_INSTANCIA), timeout=2).close()
+            c = socket.create_connection(("127.0.0.1", PORTA_INSTANCIA), timeout=2)
+            c.settimeout(2)
+            nosso = c.recv(8).startswith(SENHA_INSTANCIA)
+            c.close()
         except OSError:
             pass
-        os._exit(0)
+        if nosso:
+            os._exit(0)
+        sock = None   # outro programa usa a porta: abre assim mesmo, sem a trava de cópia única
     try:
         raiz = tk.Tk()
         painel = Painel(raiz)
-        painel.ouvir_instancia(sock)
+        if sock:
+            painel.ouvir_instancia(sock)
         raiz.mainloop()
     except Exception:
         # sem console (pythonw): guarda o erro num arquivo e avisa
