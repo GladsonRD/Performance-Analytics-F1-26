@@ -15,7 +15,8 @@ import dicas
 ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "perfil_piloto.json")
 MAX_SESSOES = 40
 PESO_IDADE = 0.85          # cada sessão mais antiga vale 85% da seguinte
-PESO_PISTA = 1.0           # (com sessões na pista, o perfil usa só elas)
+PESO_PISTA = 2.0           # sessões na mesma pista valem o dobro quando o perfil junta outras pistas
+MIN_PISTA = 3              # sessões na pista (contando a atual) para o perfil usar só a pista
 TIPOS = ("lenta", "media", "rapida")
 FASES = ("entrada", "meio", "saida")
 LENTA, RAPIDA = 120, 200   # km/h na velocidade mínima da curva
@@ -222,13 +223,50 @@ def _junta(lista, pesos):
     return round(sum(x * p for x, p in par) / sum(p for _, p in par), 3)
 
 
+def _ler():
+    """Lê o perfil; se o arquivo estiver estragado, tenta a cópia de segurança e guarda o estragado à parte
+    (nunca começa do zero por cima de um perfil que existe)."""
+    for arq in (ARQUIVO, ARQUIVO + ".bak"):
+        try:
+            with open(arq, encoding="utf-8") as f:
+                dados = json.load(f)
+            if isinstance(dados, dict) and isinstance(dados.get("sessoes"), list):
+                return dados
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            pass
+        try:
+            if arq == ARQUIVO:
+                os.replace(arq, ARQUIVO + time.strftime(".estragado-%Y%m%d-%H%M%S"))
+        except OSError:
+            pass
+    return {"sessoes": []}
+
+
+def _gravar(dados):
+    """Grava num arquivo temporário e troca de uma vez (se algo falhar no meio, o perfil antigo continua inteiro);
+    guarda a versão anterior como .bak."""
+    tmp = ARQUIVO + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, default=str)
+        if os.path.exists(ARQUIVO):
+            try:
+                os.replace(ARQUIVO, ARQUIVO + ".bak")
+            except OSError:
+                pass
+        os.replace(tmp, ARQUIVO)
+    except (OSError, TypeError, ValueError):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 def atualizar(D, metr):
     """Guarda a sessão no perfil (a mesma gravação substitui a anterior) e devolve o perfil médio."""
-    try:
-        with open(ARQUIVO, encoding="utf-8") as f:
-            dados = json.load(f)
-    except (OSError, ValueError):
-        dados = {"sessoes": []}
+    dados = _ler()
     M = D["meta"]
     chave = os.path.basename(M.get("arquivo") or "")
     sess = [s for s in dados.get("sessoes", []) if s.get("id") != chave]
@@ -237,11 +275,7 @@ def atualizar(D, metr):
     sess.sort(key=lambda s: s.get("ts") or 0)
     sess = sess[-MAX_SESSOES:]
     dados["sessoes"] = sess
-    try:
-        with open(ARQUIVO, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False)
-    except OSError:
-        pass
+    _gravar(dados)
     return perfil_medio(sess, M.get("pista"), M.get("tipo"))
 
 
@@ -251,17 +285,21 @@ def modo(tipo):
 
 
 def perfil_medio(sess, pista=None, tipo=None):
-    """Média das sessões, com as recentes pesando mais. Usa, nesta ordem, o que existir:
-    mesma pista e mesmo tipo (quali/corrida) > mesma pista > mesmo tipo em outras pistas > tudo."""
+    """Média das sessões, com as recentes pesando mais. Usa, nesta ordem: mesma pista e mesmo tipo (quali/corrida)
+    > mesma pista, quando já há pelo menos MIN_PISTA sessões ali (contando a atual); senão o mesmo tipo em todas as
+    pistas > tudo, com as sessões da pista pesando o dobro. (Antes a sessão atual sozinha já bastava para usar só a
+    pista, e o perfil "voltava a 1 sessão" em toda pista nova.)"""
     ss = [s for s in sess if s.get("metricas")]
     if not ss:
         return None
     md = modo(tipo) if tipo else None
     niveis = [("pista_tipo", [s for s in ss if pista and md and s.get("pista") == pista and modo(s.get("tipo")) == md]),
-              ("pista", [s for s in ss if pista and s.get("pista") == pista]),
+              ("pista", [s for s in ss if pista and s.get("pista") == pista])]
+    niveis = [(n, l) for n, l in niveis if len(l) >= MIN_PISTA] + [
               ("tipo", [s for s in ss if md and modo(s.get("tipo")) == md]),
               ("tudo", ss)]
     escopo, ss = next((n, l) for n, l in niveis if l)
+    ss = sorted(ss, key=lambda s: s.get("ts") or 0)
     so_pista = escopo in ("pista_tipo", "pista")
     n = len(ss)
     pesos = [PESO_IDADE ** (n - 1 - i) * min(1.0, (s["metricas"].get("voltas") or 1) / 5)

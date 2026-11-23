@@ -195,7 +195,7 @@ class Gravador:
 
                 if dados is None:
                     if ultimo_pacote and agora - ultimo_pacote > 10 and "parado" not in avisos:
-                        self.ao_estado("Sem dados do jogo (pausado ou no menu?)")
+                        self.ao_estado("Sem dados do jogo (pausado ou no menu)")
                         avisos.add("parado")
                     continue
                 if len(dados) < CABECALHO.size:

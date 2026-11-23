@@ -709,6 +709,25 @@ def _voltas_historico(h):
     return voltas
 
 
+def _aplicar_punicoes(classif):
+    """A classificação final do jogo vem com a posição de quem cruzou a linha, sem descontar as punições de tempo
+    (o tempo total também vem sem elas). Reordena quem terminou a corrida pelo tempo com a punição somada, como na
+    classificação oficial: mais voltas primeiro e, com o mesmo número de voltas, o menor tempo + punição.
+    Quem abandonou ou foi desclassificado fica onde o jogo colocou. Os pontos acompanham a posição."""
+    grupo = [x for x in classif if x["status"] in (2, 3)]
+    if len(grupo) < 2 or not all(x["tempo_total"] > 0 for x in grupo) or not any(x["penal_s"] for x in grupo):
+        return
+    vagas = sorted(x["pos"] for x in grupo)
+    pontos = {x["pos"]: x["pontos"] for x in grupo}
+    nova = sorted(grupo, key=lambda x: (-x["voltas"], x["tempo_total"] + x["penal_s"], x["pos"]))
+    for x, pos in zip(nova, vagas):
+        if x["pos"] != pos:
+            x["pos_jogo"] = x["pos"]
+        x["pos"] = pos
+        x["pontos"] = pontos[pos]
+    classif.sort(key=lambda x: x["pos"])
+
+
 def _juntar_stints(st):
     """O jogo às vezes abre um stint de 1 volta com o mesmo pneu no meio da parada (ex.: duas
     paradas seguidas na mesma equipe): médio até a 5, médio até a 6, duro. Junta esse pedaço ao
@@ -855,6 +874,8 @@ def analisar(caminho):
                                           for k in range(d.num_tyre_stints)]),
             })
         classif.sort(key=lambda x: x["pos"])
+        if tipo == "corrida":
+            _aplicar_punicoes(classif)
     else:
         # sem classificação final: monta pela ordem atual / melhor volta
         if tipo == "corrida":

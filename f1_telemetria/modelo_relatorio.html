@@ -434,7 +434,7 @@ const rodape = $(`<footer>Gerado a partir de ${esc(M.arquivo)} · telemetria UDP
   if (corrida && meuRes) tiles.push(['Pit stops', meuRes.pits, meuRes.stints.map(x => chipPneu(x.pneu)).join(' ')]);
   else tiles.push(['Voltas válidas', `${minhasValidas.length}/${minhas.length}`, minhas.length - minhasValidas.length ? `${minhas.length - minhasValidas.length} invalidada(s)` : 'nenhuma invalidada']);
   const pens = D.eventos.filter(e => e.cod === 'PENA' && ehJog(e.carro));
-  if (pens.length || (meuRes && meuRes.penal_s)) tiles.push(['Punições', pens.length, meuRes && meuRes.penal_s ? `+${meuRes.penal_s} s no tempo final` : esc(pens[0]?.texto || '')]);
+  if (pens.length || (meuRes && meuRes.penal_s)) tiles.push(['Punições', pens.length, meuRes && meuRes.penal_s ? `+${meuRes.penal_s} s no tempo final${meuRes.pos_jogo && meuRes.pos_jogo !== meuRes.pos ? ` · cruzou em P${meuRes.pos_jogo}, ficou P${meuRes.pos}` : ''}` : esc(pens[0]?.texto || '')]);
   const t = $(`<div class="tiles">${tiles.map(([r, v, d]) => `<div class="card tile"><div class="rot">${r}</div><div class="val">${v}</div><div class="det">${d || ''}</div></div>`).join('')}</div>`);
   s.appendChild(t);
   if (M.classificacao_provisoria) s.appendChild($(`<div class="aviso">A classificação foi montada a partir das voltas gravadas, porque o jogo não enviou a classificação final desta sessão.</div>`));
@@ -601,7 +601,7 @@ function resumoSessao(s) {
         <td class="num">${x.grid || '—'}</td><td class="num ${g > 0 ? 'bom' : g < 0 ? 'ruim' : 'fraco'}">${g > 0 ? '▲' + g : g < 0 ? '▼' + -g : '–'}</td>
         <td class="num">${tempo}</td><td class="num ${melhor ? 'roxo' : ''}">${fmtVolta(x.melhor_ms)}</td>
         <td class="num">${x.pits}</td><td>${(() => { let ini = 0; return x.stints.map(st => { const fim = st.fim === 255 ? x.voltas : st.fim; const h = chipPneu(st.pneu, textoStint(x.idx, st, ini, fim)); ini = fim; return h; }).join(''); })()}</td>
-        <td class="num">${x.penal_s ? '+' + x.penal_s + ' s' : ''}</td><td class="num">${x.pontos || ''}</td></tr>`;
+        <td class="num">${x.penal_s ? '+' + x.penal_s + ' s' : ''}${x.pos_jogo ? ` <span class="fraco" title="posição em que cruzou a linha, antes da punição">(cruzou P${x.pos_jogo})</span>` : ''}</td><td class="num">${x.pontos || ''}</td></tr>`;
     });
     c.appendChild($(`<div class="tab-wrap"><table><thead><tr><th class="num">Pos</th><th>Piloto</th><th class="num">Grid</th><th class="num">+/−</th><th class="num">Tempo</th><th class="num">Melhor volta</th><th class="num">Pits</th><th>Pneus</th><th class="num">Punição</th><th class="num">Pts</th></tr></thead><tbody>${linhas.join('')}</tbody></table></div>`));
   } else {
