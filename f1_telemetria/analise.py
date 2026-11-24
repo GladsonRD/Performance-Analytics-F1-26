@@ -380,12 +380,15 @@ def passada2(caminho, voltas_quero, jogador_mx=None):
         t = cab[7]
         # na largada da corrida o relógio da sessão volta a zero: o que veio antes (grid, volta de
         # apresentação) tem o mesmo número de volta e bagunçaria a 1ª volta, então é descartado
-        if t < 1.0 and t_ant > 5.0:
-            for c in carros:
-                amostras[c].clear()
-                posicoes[c].clear()
-            mx.clear()
-        t_ant = t
+        # (só os pacotes de volta e de movimento contam: no fim da sessão o jogo manda eventos com o relógio
+        # zerado, e isso apagava a sessão inteira)
+        if pid in (0, 2):
+            if t < 1.0 and t_ant > 5.0:
+                for c in carros:
+                    amostras[c].clear()
+                    posicoes[c].clear()
+                mx.clear()
+            t_ant = t
         if pid == 2:
             for c in carros:
                 r = L.ler(dados, c)
