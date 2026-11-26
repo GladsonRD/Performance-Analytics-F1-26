@@ -181,9 +181,10 @@ def metricas_sessao(D, apices):
     # temperatura dos pneus por eixo (% do tempo acima/abaixo da janela), das contas do resumo
     pneus = {}
     # só conta com a superfície medida em curvas e freadas; sessões antigas usavam a média da volta
-    # inteira (retas incluídas), ficavam sempre "frias" e não entram (por isso a chave nova "pneus_c")
+    # inteira (retas incluídas), ficavam sempre "frias" e não entram. Depois a conta passou a ser pelo NÚCLEO
+    # (o número de cima na tela do jogo, que define a aderência): chave nova "pneus_n", as antigas não entram
     sr = D.get("seu_resumo") or {}
-    comps = (sr.get("pneus_comp") or []) if sr.get("pneus_base") == "superficie_curva" else []
+    comps = (sr.get("pneus_comp") or []) if sr.get("pneus_base") == "nucleo" else []
     for eixo, rodas_ in (("diant", ("DE", "DD")), ("tras", ("TE", "TD"))):
         acima, abaixo, ader, peso = 0.0, 0.0, 0.0, 0
         for g in comps:
@@ -197,7 +198,7 @@ def metricas_sessao(D, apices):
         if peso:
             pneus[eixo] = {"acima": round(acima / peso, 1), "abaixo": round(abaixo / peso, 1), "aderencia": round(ader / peso, 2)}
     return {
-        "voltas": len(voltas), "voltas_rodas": voltas_mx, "pneus_c": pneus,
+        "voltas": len(voltas), "voltas_rodas": voltas_mx, "pneus_n": pneus,
         "curvas": {tp: sorted(k for k, v in tipo.items() if v == tp) for tp in TIPOS},
         "freio": {"pico": _media(pico), "trail": _media(trail), "soltura_m": _media(soltura)},
         "acel": {"ate_total_m": _media(ate_total), "rampa": _media(rampa), "correcoes": _media(correc_acel)},
@@ -357,7 +358,7 @@ def sugestoes(p, setup, faixas=None, vel=None, so_campos=None):
     rodas = p.get("rodas") or {}
     rot = rotulos(p)
     problemas = []   # (gravidade, título, explicação, [(campo, sentido)])
-    pn = p.get("pneus_c") or {}
+    pn = p.get("pneus_n") or {}
     frio = lambda x: (x.get("abaixo") or 0) >= FRIO and (x.get("aderencia") if x.get("aderencia") is not None else 0) < ADER_MIN
 
     def pressao(eixo):

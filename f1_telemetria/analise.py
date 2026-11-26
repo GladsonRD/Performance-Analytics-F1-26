@@ -9,6 +9,7 @@ Duas passadas pelo arquivo:
 
 import math
 import os
+import statistics
 from collections import defaultdict
 from datetime import datetime
 
@@ -44,6 +45,11 @@ def passada1(caminho):
     n_ativos = 0
     jogador = 0
     cont_jog = {}
+    assistindo = False       # o jogo avisa no pacote 1 quando a pessoa está só assistindo (espectador)
+    n_dirig = n_assist = 0   # pacotes de volta com a pessoa pilotando / assistindo
+    dono_volta = {}          # (carro, volta) -> a pessoa pilotava esse carro quando a volta começou?
+    dano_ult = {}            # carro -> soma do dano da carroceria no último pacote 10
+    saltos_dano = []         # (t, carro, aumento)
     historico = {}           # carro -> objeto PacketSessionHistoryData mais recente
     final = None             # PacketFinalClassificationData
     eventos = []
@@ -135,7 +141,12 @@ def passada1(caminho):
             primeiro_t = t
         ultimo_t = max(ultimo_t, t)
         jog = cab[10]
-        if jog < 22:
+        if pid == 2:
+            if jog < 22 and not assistindo:
+                n_dirig += 1
+            else:
+                n_assist += 1
+        if jog < 22 and not assistindo:
             # o índice do jogador pode mudar no fim da sessão (tela de resultado, espectador):
             # vale o que mais apareceu durante a gravação
             cont_jog[jog] = cont_jog.get(jog, 0) + 1
@@ -148,6 +159,8 @@ def passada1(caminho):
                 nv = r[iL["current_lap_num"]]
                 if nv == 0:
                     continue
+                if c == jog and (c, nv) not in dono_volta:
+                    dono_volta[(c, nv)] = jog < 22 and not assistindo and not pilotos.get(c, {}).get("ia", False)
                 if r[iL["grid_position"]]:
                     grid[c] = r[iL["grid_position"]]
                 if r[iL["speed_trap_fastest_speed"]] > 0:
@@ -256,6 +269,15 @@ def passada1(caminho):
 
         elif pid == 10:
             dano_bruto = dados
+            # saltos de dano na carroceria (asas, assoalho, difusor, laterais): marcam batidas, com ou sem colisão
+            for c in range(22):
+                r = D.ler(dados, c)
+                v = (r[iD["front_left_wing_damage"]] + r[iD["front_right_wing_damage"]] + r[iD["rear_wing_damage"]]
+                     + r[iD["floor_damage"]] + r[iD["diffuser_damage"]] + r[iD["sidepod_damage"]])
+                ant = dano_ult.get(c)
+                if ant is not None and v - ant >= 2:
+                    saltos_dano.append((t, c, v - ant))
+                dano_ult[c] = v
 
         elif pid == 1:
             o = leitor.objeto(1, dados)
@@ -266,8 +288,11 @@ def passada1(caminho):
                 "s2": o.sector2_lap_distance_start, "s3": o.sector3_lap_distance_start,
                 "dificuldade_ia": o.ai_difficulty, "online": o.network_game,
                 "n_drs": o.num_drs_zones,
+                "espectador": o.is_spectating,
+                "hora_dia": o.time_of_day,   # minutos desde a meia-noite, no horário da pista
                 "zonas_aero": [(z.zone_start, z.zone_end) for z in list(o.active_aero_zones_full)[:o.num_active_aero_zones_full]],
             }
+            assistindo = bool(o.is_spectating)
             sc = o.safety_car_status
             if sc != sc_ult:
                 if sc_ult and sc_periodos:
@@ -309,6 +334,7 @@ def passada1(caminho):
                     while conclusoes[c] and conclusoes[c][-1][1] > tf:
                         conclusoes[c].pop()
                 eventos = [e for e in eventos if e["t"] <= tf]
+                saltos_dano[:] = [x for x in saltos_dano if x[0] <= tf]
             elif cod == "PENA":
                 p = d.penalty
                 ev.update(carro=p.vehicle_idx, outro=p.other_vehicle_idx, volta=p.lap_num,
@@ -344,7 +370,13 @@ def passada1(caminho):
     if sc_periodos and sc_periodos[-1][2] is None:
         sc_periodos[-1][2] = ultimo_t
 
-    return dict(sess=sess, pilotos=pilotos, n_ativos=n_ativos, jogador=max(cont_jog, key=cont_jog.get) if cont_jog else jogador, historico=historico,
+    jog_final = max(cont_jog, key=cont_jog.get) if cont_jog else jogador
+    voltas_humanas = {v for (c, v), h in dono_volta.items() if c == jog_final and h}
+    # só assistiu: não pilotou nenhuma volta e quase nenhum pacote com a pessoa pilotando (quem abandonou e ficou
+    # assistindo continua como piloto, porque pilotou pelo menos a 1ª volta)
+    espectador = not cont_jog or (not voltas_humanas and n_dirig < 0.02 * (n_dirig + n_assist))
+    return dict(sess=sess, pilotos=pilotos, n_ativos=n_ativos, jogador=jog_final, historico=historico,
+                espectador=espectador, voltas_humanas=voltas_humanas, ultimo_lap=ultimo_lap, saltos_dano=saltos_dano,
                 final=final, eventos=eventos, flashbacks=flashbacks, conclusoes=conclusoes,
                 pit_na_volta=pit_na_volta, tipo_volta=tipo_volta, grid=grid, speed_trap=speed_trap,
                 snap=snap, vmax=vmax_sessao, desgaste_carro=desgaste_carro, comb_inicial=comb_inicial,
@@ -353,13 +385,15 @@ def passada1(caminho):
 
 
 # ---------------------------------------------------------------- passada 2
-def passada2(caminho, voltas_quero, jogador_mx=None):
+def passada2(caminho, voltas_quero, jogador_mx=None, janelas=None, clip=None, lc=None):
     """Amostras cronológicas só das voltas pedidas.
 
     voltas_quero: carro -> conjunto de voltas (None = todas).
     amostra: (t, volta, dist, t_volta_ms, vel, acel, freio, marcha, volante, asa (aerodinâmica ativa: 1 = modo reta), pit, modo_bateria, bateria_J,
              temperaturas da superfície dos 4 pneus)
     Também devolve as amostras do pacote 13 (só o carro do jogador): (t, slip ratio[4], slip angle[4]).
+    lc: dict a preencher com (carro, volta) -> (t, distância, limite J) do ponto da volta em que a energia recuperada
+    chegou no limite de coleta (LC) que o jogo manda.
     """
     carros = set(voltas_quero)
     amostras = {c: [] for c in carros}
@@ -369,6 +403,21 @@ def passada2(caminho, voltas_quero, jogador_mx=None):
     modo = {}
     bat = {}
     mx = []
+    sup = {}     # carro -> piso sob cada pneu (TE, TD, DE, DD), do último pacote 6
+    abaixo = {}  # carro -> volta em que a recuperação ainda estava abaixo do limite (evita pegar o resto da volta anterior)
+
+    # lances (incidentes): dentro destas janelas de tempo grava posição e pedais de todos os carros
+    janelas = sorted(janelas or [])
+    if clip is not None:
+        clip.setdefault("mov", {}); clip.setdefault("tel", {})
+
+    def na_janela(t):
+        for a, b in janelas:
+            if a <= t <= b:
+                return True
+            if a > t:
+                return False
+        return False
 
     def quero(c, volta):
         q = voltas_quero[c]
@@ -395,11 +444,16 @@ def passada2(caminho, voltas_quero, jogador_mx=None):
                 cur[c] = (r[iL["current_lap_num"]], r[iL["lap_distance"]], r[iL["current_lap_time_in_ms"]],
                           r[iL["pit_status"]])
         elif pid == 6:
+            if clip is not None and janelas and na_janela(t):
+                for c in range(22):
+                    r = T.ler(dados, c)
+                    clip["tel"].setdefault(c, []).append((t, r[iT["speed"]], r[iT["throttle"]], r[iT["brake"]], r[iT["steer"]], r[iT["gear"]]))
             for c in carros:
                 k = cur.get(c)
                 if not k or k[0] == 0 or not quero(c, k[0]):
                     continue
                 r = T.ler(dados, c)
+                sup[c] = (r[iT["surface_type0"]], r[iT["surface_type1"]], r[iT["surface_type2"]], r[iT["surface_type3"]])
                 amostras[c].append((t, k[0], k[1], k[2], r[iT["speed"]], r[iT["throttle"]], r[iT["brake"]],
                                     r[iT["gear"]], r[iT["steer"]], ot.get(c, 0), k[3], modo.get(c, 0), bat.get(c, 0),
                                     (r[iT["tyres_surface_temperature0"]], r[iT["tyres_surface_temperature1"]],
@@ -407,17 +461,32 @@ def passada2(caminho, voltas_quero, jogador_mx=None):
                                     (r[iT["tyres_inner_temperature0"]], r[iT["tyres_inner_temperature1"]],
                                      r[iT["tyres_inner_temperature2"]], r[iT["tyres_inner_temperature3"]])))
         elif pid == 0:
+            if clip is not None and janelas and na_janela(t):
+                for c in range(22):
+                    r = M.ler(dados, c)
+                    if r[iM["world_position_x"]] or r[iM["world_position_z"]]:
+                        clip["mov"].setdefault(c, []).append((t, r[iM["world_position_x"]], r[iM["world_position_z"]], r[iM["yaw"]]))
             for c in carros:
                 k = cur.get(c)
                 if not k or k[0] == 0 or not quero(c, k[0]):
                     continue
                 r = M.ler(dados, c)
-                posicoes[c].append((t, k[0], k[1], r[iM["world_position_x"]], r[iM["world_position_z"]], r[iM["yaw"]]))
+                posicoes[c].append((t, k[0], k[1], r[iM["world_position_x"]], r[iM["world_position_z"]], r[iM["yaw"]],
+                                     r[iM["world_position_y"]], sup.get(c), k[3]))   # sup: piso sob os 4 pneus (pacote 6); k[3]: box
         elif pid == 7:
             for c in carros:
                 r = S.ler(dados, c)
                 modo[c] = r[iS["ers_deploy_mode"]]
                 bat[c] = r[iS["ers_store_energy"]]
+                k = cur.get(c)
+                lim_c = r[iS["ers_harvest_limit_per_lap"]]
+                if lc is None or not k or k[0] == 0 or lim_c <= 0 or (c, k[0]) in lc:
+                    continue
+                rec = r[iS["ers_harvested_this_lap_mguk"]] + r[iS["ers_harvested_this_lap_mguh"]]
+                if rec < lim_c * 0.97:
+                    abaixo[c] = k[0]
+                elif rec >= lim_c - 2e3 and abaixo.get(c) == k[0] and k[1] > 0:
+                    lc[(c, k[0])] = (t, k[1], lim_c)
         elif pid == 16:
             for c in carros:
                 ot[c] = T2.ler(dados, c)[iT2["active_aero_mode"]]
@@ -427,10 +496,203 @@ def passada2(caminho, voltas_quero, jogador_mx=None):
         elif pid == 3 and dados[leitor.TAM_CAB:leitor.TAM_CAB + 4] == b"FLBK":
             o = leitor.objeto(3, dados)
             tf = o.event_details.flashback.flashback_session_time
-            for lst in list(amostras.values()) + list(posicoes.values()) + [mx]:
+            extra = list(clip["mov"].values()) + list(clip["tel"].values()) if clip is not None else []
+            if lc:
+                for kk in [kk for kk, v in lc.items() if v[0] > tf]:
+                    del lc[kk]
+            for lst in list(amostras.values()) + list(posicoes.values()) + [mx] + extra:
                 while lst and lst[-1][0] > tf:
                     lst.pop()
     return amostras, posicoes, mx
+
+
+def _bateria_estilo(tracos, apices, passo, corrida):
+    """Frases sobre o uso da bateria nas suas voltas, com o lugar dito pelas curvas ("entre a curva 3 e a 4")."""
+    voltas = [t for t in tracos if t.get("bat") and not t.get("pit") and not (corrida and t.get("volta") == 1)]
+    ap = sorted(i for i in apices if i >= 0)   # a numeração segue a da Análise de volta (a curva 1 pode estar no 0)
+    if len(voltas) < 2 or len(ap) < 2:
+        return None
+    n = min(len(t["bat"]) for t in voltas)
+    ap = [i for i in ap if i < n - 1]
+    if len(ap) < 2:
+        return None
+    perto = max(2, round(60 / passo))   # até 60 m do ápice conta como "na curva"
+
+    def onde(i):
+        for k, a in enumerate(ap):
+            if abs(i - a) <= perto:
+                return f"na curva {k + 1}"
+        k = sum(1 for a in ap if a < i)          # curvas já passadas
+        if k == 0 or k == len(ap):
+            return f"entre a curva {len(ap)} e a 1"
+        return f"entre a curva {k} e a {k + 1}"
+
+    # trechos de curva a curva (o último passa pela linha de chegada)
+    trechos = [(f"entre a curva {k + 1} e a {k + 2}", ap[k], ap[k + 1]) for k in range(len(ap) - 1)]
+    medias = []
+    for nome, a, b in trechos:
+        medias.append((sum(t["bat"][b] - t["bat"][a] for t in voltas) / len(voltas), nome))
+    ult = sum((t["bat"][n - 1] - t["bat"][ap[-1]]) + (t["bat"][ap[0]] - t["bat"][0]) for t in voltas) / len(voltas)
+    medias.append((ult, f"entre a curva {len(ap)} e a 1 (passando pela linha)"))
+
+    frases = []
+    gasto = sorted(m for m in medias if m[0] <= -3)[:2]
+    if gasto:
+        frases.append({"tipo": "gasto", "texto": "Onde você mais gasta: " + "; ".join(
+            f"{nm}, {-v:.0f}% por volta" for v, nm in gasto) + "."})
+    recup = sorted((m for m in medias if m[0] >= 3), reverse=True)[:2]
+    if recup:
+        frases.append({"tipo": "recupera", "texto": "Onde você mais recupera: " + "; ".join(
+            f"{nm}, +{v:.0f}% por volta" for v, nm in recup) + "."})
+
+    # limite de coleta (LC)
+    com_lc = [t for t in voltas if t.get("lc") is not None]
+    if com_lc:
+        lugares = {}
+        for t in com_lc:
+            lugares.setdefault(onde(min(n - 1, round(t["lc"] / passo))), []).append(t["lc"])
+        lugar, ds = max(lugares.items(), key=lambda x: len(x[1]))
+        maioria = len(com_lc) * 2 >= len(voltas)
+        txt = f"Você atinge o limite de coleta {lugar} (em {len(com_lc)} de {len(voltas)} voltas)."
+        if maioria:
+            # o limite é de energia RECUPERADA por volta: gastar antes não muda quanto se recupera. Atingir é bom
+            # (recuperou o máximo); depois dele as freadas até a linha não recuperam nada, e na linha zera de novo.
+            txt += (" Isso é bom: você recupera o máximo que o jogo permite. Dali até a linha as freadas não recuperam"
+                    " mais nada, e a contagem zera ao cruzar a linha.")
+            saldo_v = sum(t["bat"][n - 1] - t["bat"][0] for t in voltas) / len(voltas)
+            na_linha = sum(t["bat"][0] for t in voltas) / len(voltas)
+            if not corrida or (saldo_v >= -1 and na_linha >= 50):
+                # a reta onde você chega mais rápido (média das voltas): onde o boost rende mais
+                vm = [sum(t["v"][i] for t in voltas) / len(voltas) for i in range(n)]
+                reta = onde(max(range(n), key=lambda i: vm[i]))
+                txt += (f" Sua bateria passa pela linha com {na_linha:.0f}% em média e não cai de uma volta para a outra:"
+                        f" está sobrando energia. Use mais o boost, principalmente na reta onde você chega mais rápido ({reta}).") if corrida else (
+                        f" Numa volta rápida, use a bateria sem economizar, principalmente na reta onde você chega mais rápido ({reta}).")
+        frases.append({"tipo": "lc", "texto": txt})
+    elif corrida:
+        frases.append({"tipo": "lc", "texto": "Você não atingiu o limite de coleta em nenhuma volta: ainda dava para recuperar mais energia."})
+
+    # bateria zerada
+    zerou = {}
+    for t in voltas:
+        i = next((j for j in range(n) if t["bat"][j] <= 1), None)
+        if i is not None:
+            zerou.setdefault(onde(i), set()).add(t["volta"])
+    if zerou:
+        lugar, vs = max(zerou.items(), key=lambda x: len(x[1]))
+        frases.append({"tipo": "zerou", "texto": f"A bateria zerou {lugar} em {len(vs)} {'volta' if len(vs) == 1 else 'voltas'}"
+                       f" (volta {', '.join(str(v) for v in sorted(vs))}). Depois disso o carro anda sem a ajuda elétrica até recuperar."})
+
+    # fim da volta
+    if corrida:
+        saldo = sum(t["bat"][n - 1] - t["bat"][0] for t in voltas) / len(voltas)
+        fim = voltas[-1]["bat"][n - 1]
+        if saldo <= -2:
+            txt = f"Você termina cada volta com {-saldo:.0f}% a menos de bateria, em média."
+            if fim > 0:
+                txt += f" Nesse ritmo, a bateria acaba em umas {max(1, round(fim / -saldo))} voltas."
+        elif saldo >= 2:
+            txt = f"Você termina cada volta com {saldo:.0f}% a mais de bateria, em média: está guardando energia que poderia virar tempo."
+        else:
+            txt = "Sua bateria fica estável de uma volta para a outra."
+        frases.append({"tipo": "saldo", "texto": txt})
+    else:
+        sobra = sum(t["bat"][n - 1] for t in voltas) / len(voltas)
+        if sobra >= 15:
+            frases.append({"tipo": "sobra", "texto": f"Você cruza a linha com {sobra:.0f}% de bateria, em média: numa volta rápida, isso é tempo que ficou na mesa."})
+    return {"frases": frases, "voltas": len(voltas)} if frases else None
+
+
+def _por_lc(tr, v):
+    """Ponto da volta (em metros) em que a recuperação de energia chegou no limite de coleta, e o limite em MJ."""
+    if v:
+        tr["lc"] = round(v[1])
+        tr["lc_mj"] = round(v[2] / 1e6, 2)
+
+
+def _incidentes(p1):
+    """Lances com dano: colisões entre carros em que algum dos dois perdeu peça (asa, assoalho...) e batidas
+    sozinho (no muro, na zebra alta) que deram dano. Os mais graves primeiro, no máximo 25."""
+    saltos = p1.get("saltos_dano") or []
+    lista = []
+    usados = set()
+    for e in p1["eventos"]:
+        if e.get("cod") != "COLL":
+            continue
+        t, a, b = e["t"], e.get("carro"), e.get("outro")
+        dano = {}
+        for k, (ts, c, v) in enumerate(saltos):
+            if c in (a, b) and t - 1 <= ts <= t + 4:
+                dano[c] = dano.get(c, 0) + v
+                usados.add(k)
+        if any(abs(x["t"] - t) < 2 and set(x["carros"]) == {a, b} for x in lista):
+            continue   # o jogo manda o mesmo toque mais de uma vez
+        lista.append({"t": t, "tipo": "colisao" if dano else "toque", "carros": [a, b], "dano": dano})
+    for k, (ts, c, v) in enumerate(saltos):
+        if k in usados:
+            continue
+        perto = next((x for x in lista if abs(x["t"] - ts) < 3 and c in x["carros"]), None)
+        if perto:
+            perto["dano"][c] = perto["dano"].get(c, 0) + v
+        else:
+            lista.append({"t": ts, "tipo": "batida", "carros": [c], "dano": {c: v}})
+    lista.sort(key=lambda x: (-sum(x["dano"].values()), x["tipo"] != "colisao"))
+    lista = sorted(lista[:25], key=lambda x: x["t"])
+    return lista
+
+
+def _montar_lances(incid, clip, voltas, p1):
+    """Para cada lance: 8 s antes e 5 s depois, a 10 quadros por segundo, posição e pedais dos carros
+    envolvidos e dos que estavam a até 60 m."""
+    import bisect
+    mov, tel = clip.get("mov", {}), clip.get("tel", {})
+
+    def em(lista, t):
+        if not lista:
+            return None
+        ts = [x[0] for x in lista]
+        i = bisect.bisect_left(ts, t)
+        if i <= 0:
+            return lista[0] if abs(lista[0][0] - t) < 0.5 else None
+        if i >= len(lista):
+            return lista[-1] if abs(lista[-1][0] - t) < 0.5 else None
+        a, b = lista[i - 1], lista[i]
+        return a if t - a[0] < b[0] - t else b
+
+    out = []
+    for inc in incid:
+        t = inc["t"]
+        envolvidos = [c for c in inc["carros"] if c is not None and c < 22]
+        if not envolvidos:
+            continue
+        perto = set(envolvidos)
+        for c, lst in mov.items():
+            p = em(lst, t)
+            if not p:
+                continue
+            for e in envolvidos:
+                q = em(mov.get(e), t)
+                if q and (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2 < 60 ** 2:
+                    perto.add(c)
+        quadros = [round(t - 8 + k * 0.1, 2) for k in range(131)]
+        carros = {}
+        for c in sorted(perto):
+            pos, ped = [], []
+            for tq in quadros:
+                p, r = em(mov.get(c), tq), em(tel.get(c), tq)
+                pos.append([round(p[1], 1), round(p[2], 1), round(p[3], 3)] if p else None)
+                ped.append([r[1], round(r[2], 2), round(r[3], 2), round(r[4], 2), r[5]] if r else None)
+            if any(pos):
+                carros[c] = {"pos": pos, "ped": ped}
+        # volta em que aconteceu (do primeiro envolvido)
+        volta = None
+        for v, tc, _ in p1["conclusoes"].get(envolvidos[0], []):
+            if tc > t:
+                volta = v
+                break
+        out.append({"t": round(t, 2), "tipo": inc["tipo"], "carros": envolvidos, "dano": inc["dano"],
+                    "volta": volta, "t0": quadros[0], "dt": 0.1, "quadros": carros})
+    return out
 
 
 def _reamostrar(xs, ys, grade):
@@ -500,13 +762,14 @@ def _mapa(ps, tempos, dists, grade):
     lp, ult = [], -1e9
     for d_, p, y_ in zip(dp, ps, yr):
         if d_ > ult:
-            lp.append((d_, p[3], p[4], y_, p[5]))
+            lp.append((d_, p[3], p[4], y_, p[5], p[6] if len(p) > 6 else 0.0))
             ult = d_
     if len(lp) <= 20:
         return out
     d = [p[0] for p in lp]
     out["x"] = [round(v, 1) for v in _reamostrar(d, [p[1] for p in lp], grade)]
     out["z"] = [round(v, 1) for v in _reamostrar(d, [p[2] for p in lp], grade)]
+    out["y"] = [round(v, 1) for v in _reamostrar(d, [p[5] for p in lp], grade)]   # altura (mapa 3D)
     # rumo do carro (rad), sem saltos de ±π, para desenhar o carrinho virado certo no traçado
     ru = []
     for p in lp:
@@ -844,7 +1107,15 @@ def analisar(caminho):
     comp = sess["comprimento"] or 5000
     jogador = p1["jogador"]
     pilotos = p1["pilotos"]
+    espectador = p1["espectador"]
     carros = sorted(c for c in pilotos if c < max(p1["n_ativos"], 1) or p1["historico"].get(c))
+    if espectador:
+        # só assistindo: o carro "principal" do relatório passa a ser o líder no fim (ou o 1º do grid)
+        fim = {c: r[iL["car_position"]] for c, r in p1["ultimo_lap"].items()} if p1.get("ultimo_lap") else {}
+        if p1.get("final"):
+            fim = {c: p1["final"].classification_data[c].position for c in carros if p1["final"].classification_data[c].position}
+        if fim:
+            jogador = min(fim, key=lambda c: fim[c] or 99)
     if jogador not in carros:
         carros.append(jogador)
 
@@ -938,14 +1209,27 @@ def analisar(caminho):
             continue
         vv = sorted((v for v in voltas[c] if v["valida"]), key=lambda v: v["ms"])
         if tipo == "corrida":
-            vv = vv[:5]
+            # + a volta mais perto do ritmo dele (mediana das voltas limpas), para comparar ritmo de corrida
+            em_sc = {n for x in sc for n in range(x["de"], x["ate"] + 2)}
+            lp = [v for v in vv if v["n"] > 1 and v["n"] not in em_sc]
+            if len(lp) >= 3:
+                med = statistics.median(v["ms"] for v in lp)
+                lp = [v for v in lp if v["ms"] < med + 3000]
+                med = statistics.median(v["ms"] for v in lp)
+                vv = vv[:5] + [min(lp, key=lambda v: abs(v["ms"] - med))]
+            else:
+                vv = vv[:5]
         ref += [(v["ms"], c, v["n"]) for v in vv]
     quero = {}
     for _, c, nv in ref:
         quero.setdefault(c, set()).add(nv)
         quero[c].add(nv - 1)   # fim da volta anterior: trecho antes da linha
     quero[jogador] = None
-    amostras, posicoes_xy, mx = passada2(caminho, quero, jogador)
+    incid = _incidentes(p1)
+    clip = {}
+    lc = {}
+    amostras, posicoes_xy, mx = passada2(caminho, quero, jogador, [(i["t"] - 8, i["t"] + 5) for i in incid], clip, lc)
+    incidentes = _montar_lances(incid, clip, voltas, p1)
     passo = max(5, round(comp / 900))
 
     tracos = []
@@ -962,12 +1246,14 @@ def analisar(caminho):
                           setores=setores_de(h))
         if tr and h:
             tr.update(carro=jogador, volta=nv, ms=h["ms"], valida=h["valida"], s=h["s"])
+            _por_lc(tr, lc.get((jogador, nv)))
             tracos.append(tr)
     for ms, c, nv in ref:
         h = tempos_hist.get((c, nv))
         tr = montar_traco(amostras[c], posicoes_xy[c], nv, comp, passo, ms, p1["ers_max"], setores=setores_de(h))
         if tr:
             tr.update(carro=c, volta=nv, ms=ms, valida=True, s=h["s"] if h else None)
+            _por_lc(tr, lc.get((c, nv)))
             tracos.append(tr)
 
     # voltas do jogador com dados de carro
@@ -1056,6 +1342,7 @@ def analisar(caminho):
             "sessao": SESSOES.get(tipo_n, str(tipo_n)), "tipo": tipo, "tipo_n": tipo_n,
             "data": data_gravacao.strftime("%d/%m/%Y %H:%M"),
             "clima": CLIMA.get(sess["clima"], ""), "temp_pista": sess["temp_pista"], "temp_ar": sess["temp_ar"],
+            "hora_pista": sess.get("hora_dia"),
             "voltas_total": sess["voltas_total"], "comprimento": comp, "s2": sess["s2"], "s3": sess["s3"],
             "jogador": jogador, "online": bool(sess["online"]), "dificuldade_ia": sess["dificuldade_ia"],
             "vmax": p1["vmax"], "passo": passo, "arquivo": os.path.basename(caminho),
@@ -1063,6 +1350,7 @@ def analisar(caminho):
             "classificacao_provisoria": fin is None,
             "comb_inicial": p1["comb_inicial"],
             "bateria_mj": round(p1["ers_max"] / 1e6, 2),
+            "espectador": espectador,
         },
         "pilotos": {c: pilotos.get(c, {"idx": c, "nome": f"Carro {c + 1}", "numero": 0, "cor": None})
                     for c in carros},
@@ -1077,6 +1365,7 @@ def analisar(caminho):
         "desgaste_carro": {c: v for c, v in p1["desgaste_carro"].items() if c in carros},
         "tracos": tracos,
         "eventos": eventos,
+        "incidentes": incidentes,
         "flashbacks": len(p1["flashbacks"]),
         "sc": sc,
         "vmax_carro": {c: v for c, v in p1["vmax_carro"].items() if c in carros and v},
@@ -1094,6 +1383,15 @@ def analisar(caminho):
                               for c, v in p1["temp_carro"].items() if c in carros},
         "pit_voltas": {c: sorted(p1["pit_na_volta"].get(c, ())) for c in carros if p1["pit_na_volta"].get(c)},
     }
+    # entrou na sessão já começada (assistindo ou com a IA no carro) e depois pegou o carro: só as voltas que a
+    # pessoa pilotou contam como dela (perfil, dicas, "suas voltas")
+    hum = p1["voltas_humanas"]
+    if not espectador and hum and min(hum) > 1:
+        D["meta"]["entrou_volta"] = min(hum)
+        D["jogador_voltas"] = [e for e in D["jogador_voltas"] if e["n"] in hum]
+        D["tracos"] = [t for t in D["tracos"] if t.get("carro") != jogador or t.get("volta") in hum]
+    if espectador:
+        D["setup"] = None
     try:
         import setups_ref
         D["setup_ref"] = setups_ref.carregar(sess["pista"]) if D.get("setup") else None
@@ -1113,15 +1411,34 @@ def analisar(caminho):
             n_ = min((min(len(t["x"]), len(t["z"])) for t in tracos if t.get("x") and t.get("z")), default=0)
             if n_:
                 geo = pistas.acumular(sess["pista"], comp, tracos, passo)
-                D["pista_geo"] = pistas.para_relatorio(geo, passo, n_)
+                try:   # zebras, grama e brita pelos pneus de todos os carros
+                    piso = pistas.acumular_piso(sess["pista"], geo, posicoes_xy, os.path.basename(caminho))
+                except Exception:  # noqa: BLE001
+                    piso = None
+                try:   # pit lane: por onde os carros passaram com o status de box
+                    pistas.acumular_box(sess["pista"], geo, posicoes_xy)
+                except Exception:  # noqa: BLE001
+                    pass
+                D["pista_geo"] = pistas.para_relatorio(geo, passo, n_, piso, pistas.carregar_muros(sess["pista"], geo),
+                                                       pistas.carregar_box(sess["pista"], geo))
         except Exception:
             D["pista_geo"] = None
-        D["seu_resumo"] = dicas.seu_resumo(D, idx)
-        try:
-            import perfil
-            D["estilo"] = perfil.montar(D, idx)
-        except Exception as ex:  # noqa: BLE001
-            D["estilo"] = {"aviso": f"Não foi possível montar o perfil: {ex}"}
+        if espectador:   # só assistiu: nada de dicas pessoais nem de mexer no perfil do piloto
+            D["seu_resumo"] = {"aviso": "Sessão assistida como espectador: sem dicas pessoais."}
+            D["estilo"] = {"aviso": "Sessão assistida como espectador: não entra no seu perfil."}
+        else:
+            D["seu_resumo"] = dicas.resumo_com_escolha(D, idx)
+            try:
+                import perfil
+                D["estilo"] = perfil.montar(D, idx)
+            except Exception as ex:  # noqa: BLE001
+                D["estilo"] = {"aviso": f"Não foi possível montar o perfil: {ex}"}
+            if D.get("estilo") and not D["estilo"].get("aviso"):
+                try:
+                    D["estilo"]["bateria"] = _bateria_estilo([t for t in D["tracos"] if t.get("carro") == jogador],
+                                                             idx, passo, tipo == "corrida")
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception as ex:  # o resumo nunca pode impedir o relatório
         D["seu_resumo"] = {"aviso": f"Não foi possível montar as dicas: {ex}"}
     D["resumo_sessao"] = dicas.resumo_sessao(D)

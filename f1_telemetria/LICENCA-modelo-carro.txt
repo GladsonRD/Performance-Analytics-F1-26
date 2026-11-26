@@ -1,0 +1,10 @@
+Modelo 3D do carro usado no replay em 3ª pessoa
+
+"2027 Formula 1 Car" por Abu Saif (https://sketchfab.com/abuhossain844)
+Fonte: https://sketchfab.com/3d-models/2027-formula-1-car-900b2d93db1b4fd7bfce436067e25287
+Licença: Creative Commons Atribuição 4.0 Internacional (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Alterações: malha simplificada (de ~2,2 milhões para ~43 mil triângulos), materiais
+substituídos por cores simples (a pintura muda com a cor de cada volta) e coordenadas
+compactadas em 16 bits dentro do modelo_relatorio.html.

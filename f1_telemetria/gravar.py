@@ -234,7 +234,9 @@ class Gravador:
                     pista = struct.unpack_from("<b", dados, CABECALHO.size + 7)[0]
                     info["pista"] = PISTAS.get(pista, f"Pista {pista}")
                     info["sessao"] = SESSOES.get(s.tipo, "")
-                elif pid == 2:
+                    # o jogo avisa quando a pessoa só está assistindo (espectador); o índice do jogador vem 255
+                    info["_assistindo"] = len(dados) > 44 and dados[44] == 1 or _p >= 22
+                elif pid == 2 and _p < 22:
                     try:
                         r = leitor.LAP.ler(dados, _p)
                         info["volta"] = r[leitor.LAP.idx["current_lap_num"]]
@@ -266,6 +268,7 @@ class Gravador:
                     ultimo_estado = agora
                     nome = SESSOES.get(s.tipo, "sessão") if s.tipo is not None else "sessão"
                     self.ao_estado("Relatório pronto, aguardando a próxima sessão" if s.relatorio
+                                   else f"Assistindo {nome} (espectador)..." if info.get("_assistindo")
                                    else f"Gravando {nome}...")
         finally:
             sock.close()

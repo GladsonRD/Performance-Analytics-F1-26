@@ -73,7 +73,7 @@ def _nome_curva(k):
 
 
 # ---------------------------------------------------------------- seu resumo
-def seu_resumo(D, apices_idx):
+def seu_resumo(D, apices_idx, A_esc=None, B_esc=None):
     M = D["meta"]
     J = M["jogador"]
     passo = M["passo"]
@@ -82,9 +82,9 @@ def seu_resumo(D, apices_idx):
     meus_validos = sorted([t for t in meus if t["valida"] and not t["pit"]], key=lambda t: t["ms"])
     if not meus_validos:
         return {"aviso": "Sem volta válida completa sua nesta sessão para analisar."}
-    A = meus_validos[0]
+    A = A_esc or meus_validos[0]
     rivais = sorted([t for t in D["tracos"] if t["carro"] != J and t["valida"]], key=lambda t: t["ms"])
-    B = rivais[0] if rivais else (meus_validos[1] if len(meus_validos) > 1 else None)
+    B = B_esc or (rivais[0] if rivais else (meus_validos[1] if len(meus_validos) > 1 else None))
     out = {"volta": A["volta"], "ms": A["ms"], "itens": []}
     itens = out["itens"]
 
@@ -306,24 +306,28 @@ def seu_resumo(D, apices_idx):
     # ------------------------------------------- pneus: temperatura x janela ideal, por composto, em todas as voltas
     comp_volta = {v["n"]: COMPOSTO.get(v.get("pneu_real")) for v in D["jogador_voltas"]}
     pit_volta = {v["n"]: bool(v.get("pit")) for v in D["jogador_voltas"]}
-    com_temp = [t for t in meus if t.get("temp") and comp_volta.get(t["volta"])]
-    # janela de aderência pela temperatura da SUPERFÍCIE, contando só curvas e freadas (onde o pneu
-    # trabalha): nas retas a superfície esfria e puxaria a média para baixo sem o pneu perder nada.
+    com_temp = [t for t in meus if t.get("temp_n") and t.get("temp") and comp_volta.get(t["volta"])]
+    # janela de aderência pela temperatura do NÚCLEO (carcaça): é o número de cima na tela de pneus do jogo e
+    # o que define a aderência. Ele muda devagar, então conta a volta inteira. A superfície (número do meio na
+    # tela) pula a cada curva e reta; fica só como linha de apoio, medida nas curvas e freadas.
     def carga(t):
         vol, fr = t.get("volante"), t.get("freio")
         if not vol or not fr:
             return list(range(len(t["temp"][0])))
         idx = [i for i in range(min(len(vol), len(fr), len(t["temp"][0]))) if abs(vol[i]) > CARGA_VOLANTE or fr[i] > CARGA_FREIO]
         return idx or list(range(len(t["temp"][0])))
-    pts = {}                                   # volta -> roda -> [(índice, temperatura)]
+    pts = {}                                   # volta -> roda -> [(índice, temperatura do núcleo)]
+    sup = {}                                   # volta -> roda -> média da superfície em curva/freada
     for t in com_temp:
+        pts[t["volta"]] = [list(enumerate(t["temp_n"][r])) for r in range(4)]
         idx = carga(t)
-        pts[t["volta"]] = [[(i, t["temp"][r][i]) for i in idx] for r in range(4)]
-    out["pneus_base"] = "superficie_curva"
+        sup[t["volta"]] = [round(statistics.mean(t["temp"][r][i] for i in idx)) for r in range(4)]
+    out["pneus_base"] = "nucleo"
     out["pneus_voltas"] = [{"n": t["volta"], "comp": comp_volta[t["volta"]], "pit": pit_volta.get(t["volta"], False),
                             "media": [round(statistics.mean(x for _, x in pts[t["volta"]][r])) for r in range(4)],
                             "min": [min(x for _, x in pts[t["volta"]][r]) for r in range(4)],
-                            "max": [max(t["temp"][r]) for r in range(4)]}
+                            "max": [max(t["temp_n"][r]) for r in range(4)],
+                            "sup": sup[t["volta"]]}
                            for t in sorted(com_temp, key=lambda t: t["volta"])]
     grupos = {}
     for t in com_temp:
@@ -348,7 +352,7 @@ def seu_resumo(D, apices_idx):
             todas = [x for t in laps for _, x in pts[t["volta"]][r]]
             if not todas:
                 continue
-            tmax, vmax_, imax = max((x, t["volta"], i) for t in laps for i, x in enumerate(t["temp"][r]))
+            tmax, vmax_, imax = max((x, t["volta"], i) for t in laps for i, x in enumerate(t["temp_n"][r]))
             tmin = min(todas)
             abaixo = sum(1 for x in todas if x < jmin) / len(todas) * 100
             dentro = sum(1 for x in todas if jmin <= x <= jmax) / len(todas) * 100
@@ -365,7 +369,8 @@ def seu_resumo(D, apices_idx):
             g["rodas"].append({"roda": RODAS_C[r], "media": round(statistics.mean(todas)), "min": tmin, "max": tmax,
                                "volta_max": vmax_, "curva_max": curva_de(min(imax, n - 1)), "curva_fria": k_frio,
                                "abaixo": round(abaixo), "dentro": round(dentro), "acima": round(acima),
-                               "abertura": laps[0]["temp"][r][0] if M["tipo"] != "corrida" else None,
+                               "abertura": laps[0]["temp_n"][r][0] if M["tipo"] != "corrida" else None,
+                               "sup_media": round(statistics.mean(sup[t["volta"]][r] for t in laps)),
                                "aderencia_media": round(ader, 2), "frio": abaixo >= 30 and ader < ADER_MIN,
                                })
             if acima >= 20:
@@ -416,9 +421,9 @@ def seu_resumo(D, apices_idx):
                 add("Pneus", f"{nome_c}: temperatura dentro da janela ideal na maior parte do tempo.", "bom")
     # classificação: temperatura na abertura da sua melhor volta
     comp = comp_volta.get(A["volta"])
-    if comp and A.get("temp") and M["tipo"] != "corrida":
+    if comp and A.get("temp_n") and M["tipo"] != "corrida":
         (jmin, jmax), (cmin, cmax) = janela(comp)
-        ab = [A["temp"][r][0] for r in range(4)]
+        ab = [A["temp_n"][r][0] for r in range(4)]
         frios_ab = [RODAS_C[r] for r in range(4) if ab[r] < cmin]
         quentes_ab = [RODAS_C[r] for r in range(4) if ab[r] > cmax + 10]
         txt = (f"Abertura da sua melhor volta: {', '.join(f'{RODAS_C[r]} {ab[r]} °C' for r in (2, 3, 0, 1))}. "
@@ -430,6 +435,77 @@ def seu_resumo(D, apices_idx):
         else:
             add("Pneus", txt + " Você abriu a volta na temperatura certa.", "bom")
     return out
+
+
+def _limpas(D, c):
+    """Voltas de ritmo de corrida do carro: válidas, sem a 1ª, sem box e sem safety car; tira as com erro grande."""
+    import corrida
+    box, sc = corrida._voltas_box(D, c), corrida._voltas_sc(D)
+    vs = [v for v in (D["voltas"].get(c) or []) if v.get("valida") and v.get("ms") and v["n"] > 1
+          and v["n"] not in box and v["n"] not in sc]
+    if len(vs) < 3:
+        return []
+    med = statistics.median(v["ms"] for v in vs)
+    return [v for v in vs if v["ms"] < med + 3000]
+
+
+def resumo_com_escolha(D, apices_idx):
+    """"Seu resumo" com a referência escolhida e as dicas prontas contra cada piloto, para trocar no relatório.
+    Corrida: compara RITMO (a volta de cada um mais perto da mediana das voltas limpas) e a referência padrão é
+    quem tem o melhor ritmo. Outras sessões: melhor volta contra melhor volta, referência = a mais rápida."""
+    M = D["meta"]
+    J = M["jogador"]
+    nome = lambda c: D["pilotos"].get(c, {}).get("nome", f"Carro {c + 1}")
+    corrida_ = M["tipo"] == "corrida"
+    por_carro = {}
+    for t in D["tracos"]:
+        por_carro.setdefault(t["carro"], []).append(t)
+    opcoes, A = [], None
+    if corrida_:
+        def ritmo(c):
+            lp = _limpas(D, c)
+            if not lp:
+                return None
+            med = statistics.median(v["ms"] for v in lp)
+            ns = {v["n"] for v in lp}
+            cand = [t for t in por_carro.get(c, []) if t["volta"] in ns and t.get("ms")]
+            if not cand:
+                return None
+            return med, len(lp), min(cand, key=lambda t: abs(t["ms"] - med))
+        meu = ritmo(J)
+        if meu:
+            A = meu[2]
+            for c in por_carro:
+                if c == J:
+                    continue
+                r = ritmo(c)
+                if r:
+                    opcoes.append({"carro": c, "nome": nome(c), "ritmo_ms": round(r[0]), "n_limpas": r[1], "tr": r[2]})
+            # quem tem poucas voltas limpas (abandonou, rodou...) vai para o fim da lista: ritmo pouco confiável
+            lim = max([3] + [o["n_limpas"] for o in opcoes]) / 2
+            opcoes.sort(key=lambda o: (o["n_limpas"] < lim, o["ritmo_ms"]))
+    if not opcoes:
+        A = None
+        for c, ts in por_carro.items():
+            vs = [t for t in ts if t["valida"] and t.get("ms")] if c != J else []
+            if vs:
+                b = min(vs, key=lambda t: t["ms"])
+                opcoes.append({"carro": c, "nome": nome(c), "tr": b})
+        opcoes.sort(key=lambda o: o["tr"]["ms"])
+    base = seu_resumo(D, apices_idx, A, opcoes[0]["tr"] if opcoes else None)
+    if base.get("aviso") or not opcoes:
+        return base
+    base["modo"] = "ritmo" if A else "melhor"
+    if A:
+        lp = _limpas(D, J)
+        base["ritmo"] = {"ms": round(statistics.median(v["ms"] for v in lp)), "n_limpas": len(lp)}
+    por = {}
+    for o in opcoes:
+        r = base if o is opcoes[0] else seu_resumo(D, apices_idx, A, o["tr"])
+        por[str(o["carro"])] = {"itens": r["itens"], "ref": r.get("ref")}
+    base["opcoes"] = [{k: v for k, v in o.items() if k != "tr"} | {"volta": o["tr"]["volta"], "ms": o["tr"]["ms"]} for o in opcoes]
+    base["por_piloto"] = por
+    return base
 
 
 # ---------------------------------------------------------------- resumo da sessão

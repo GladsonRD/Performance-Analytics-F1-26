@@ -280,13 +280,242 @@ def acumular(pid, comp, tracos, passo):
     return geo
 
 
-def para_relatorio(geo, passo, n):
+# ------------------------------------------------------------------ piso: zebras, grama e brita
+# O pacote 6 diz o piso sob cada pneu (0 asfalto, 1 zebra, 4 brita, 7 grama...). Com a posição e o rumo
+# do carro, cada pneu vira um ponto no mapa: juntando todos os carros e voltas, aparecem as zebras de
+# verdade e onde tem grama ou brita. Fica em pistas/<id>_piso.json (alinhado com a linha central).
+EIXO_D, EIXO_T, MEIA_BITOLA = 1.7, -1.7, 0.8      # posição dos pneus em relação ao centro do carro (m)
+PNEUS = ((EIXO_T, -MEIA_BITOLA), (EIXO_T, MEIA_BITOLA), (EIXO_D, -MEIA_BITOLA), (EIXO_D, MEIA_BITOLA))   # TE, TD, DE, DD
+ZEBRA, BRITA, GRAMA = 1, 4, 7
+GRAMAS = {6, 7, 8}          # grama, grama "cortada" etc.
+BRITAS = {4, 5, 9}          # brita, areia
+
+
+def _arq_piso(pid, base=False):
+    return os.path.join(PASTA_BASE if base else PASTA, f"{pid}_piso.json")
+
+
+def _ref(geo):
+    return [len(geo["cx"]), round(geo["cx"][0], 1), round(geo["cz"][0], 1)]
+
+
+def _piso_vazio(geo):
+    n = len(geo["cx"])
+    z = lambda v: [v] * n
+    return {"ref": _ref(geo), "ids": [], "zl": z(0), "zr": z(0), "zlo": z(None), "zro": z(None),
+            "gl": z(0), "gr": z(0), "bl": z(0), "br": z(0), "al": z(None), "ar": z(None)}
+
+
+def carregar_piso(pid, geo):
+    """Piso acumulado da pista (o seu; senão o que vem com o programa), se bater com a linha central."""
+    for base in (False, True):
+        p = _ler(_arq_piso(pid, base))
+        if p and p.get("ref") == _ref(geo):
+            return p
+    return None
+
+
+def acumular_piso(pid, geo, posicoes, rid):
+    """Soma ao piso da pista os pneus de todos os carros desta gravação (uma vez por gravação)."""
+    if not geo or not geo.get("cx"):
+        return None
+    piso = carregar_piso(pid, geo) or _piso_vazio(geo)
+    if rid and rid in piso["ids"]:
+        return piso
+    cx, cz = geo["cx"], geo["cz"]
+    n = len(cx)
+    nx, nz = _normais(cx, cz)
+    perto = lambda i, wx, wz: min(((i + k) % n for k in range(-4, 5)), key=lambda m: (cx[m] - wx) ** 2 + (cz[m] - wz) ** 2)
+    for ps in posicoes.values():
+        for j in range(1, len(ps) - 1, 2):
+            p = ps[j]
+            sup = p[7] if len(p) > 7 else None
+            if not sup:
+                continue
+            fora = any(s != 0 for s in sup)
+            if not fora and j % 12 != 1:          # só asfalto: amostra menos (serve para a largura)
+                continue
+            hx, hz = math.sin(p[5]), math.cos(p[5])          # rumo do carro (yaw do pacote 0)
+            lx, lz = -hz, hx
+            i = int(round(p[2] / G)) % n
+            for (fa, la), s in zip(PNEUS, sup):
+                wx, wz = p[3] + hx * fa + lx * la, p[4] + hz * fa + lz * la
+                k = perto(i, wx, wz)
+                o = (wx - cx[k]) * nx[k] + (wz - cz[k]) * nz[k]
+                if abs(o) > 40:
+                    continue
+                L = "l" if o > 0 else "r"
+                ao = abs(o)
+                if s == 0:
+                    a = piso["a" + L]
+                    if a[k] is None or ao > a[k]:
+                        a[k] = round(ao, 2)
+                elif s == ZEBRA:
+                    piso["z" + L][k] += 1
+                    zo = piso["z" + L + "o"]
+                    if zo[k] is None or ao > zo[k]:
+                        zo[k] = round(ao, 2)
+                elif s in GRAMAS:
+                    piso["g" + L][k] += 1
+                elif s in BRITAS:
+                    piso["b" + L][k] += 1
+    if rid:
+        piso["ids"] = (piso["ids"] + [rid])[-200:]
+    try:
+        os.makedirs(PASTA, exist_ok=True)
+        tmp = _arq_piso(pid) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(piso, f)
+        os.replace(tmp, _arq_piso(pid))
+    except OSError:
+        pass
+    return piso
+
+
+def _trechos(marca, n, min_pts, junta):
+    """Liga marcas próximas (buracos de até `junta` pontos) e tira trechos curtos demais."""
+    out = list(marca)
+    i = 0
+    while i < n:                                  # fecha buracos pequenos
+        if out[i]:
+            j = i + 1
+            while j < n and not out[j] and j - i <= junta + 1:
+                j += 1
+            if j < n and out[j] and j - i <= junta + 1:
+                for k in range(i, j):
+                    out[k] = True
+            i = j if j > i else i + 1
+        else:
+            i += 1
+    i = 0
+    while i < n:                                  # tira os curtos
+        if out[i]:
+            j = i
+            while j < n and out[j]:
+                j += 1
+            if j - i < min_pts:
+                for k in range(i, j):
+                    out[k] = False
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def piso_relatorio(piso, geo):
+    """Por ponto da linha central (a cada G m) e por lado: largura da zebra além da borda (0 = sem zebra)
+    e o que tem na área de escape (0 = não se sabe/asfalto, 1 = grama, 2 = brita)."""
+    if not piso:
+        return None
+    n = len(geo["cx"])
+    out = {}
+    for L, borda in (("l", geo["esq"]), ("r", geo["dir"])):
+        z = piso["z" + L]
+        tem = _trechos([z[i] >= 2 for i in range(n)], n, 3, 5)      # liga buracos de até 25 m na mesma zebra
+        tem = [tem[i] or (tem[(i - 1) % n] and z[i] >= 1) or (tem[(i + 1) % n] and z[i] >= 1) for i in range(n)]   # pontas
+        larg = []
+        for i in range(n):
+            if not tem[i]:
+                larg.append(0)
+                continue
+            zo = piso["z" + L + "o"][i]
+            larg.append(round(min(2.2, max(1.0, (zo - borda[i] + 0.4) if zo is not None else 1.2)), 2))
+        out["z" + L] = larg
+        g, b = piso["g" + L], piso["b" + L]
+        gt = _trechos([g[i] >= 1 for i in range(n)], n, 1, 3)
+        bt = _trechos([b[i] >= 1 for i in range(n)], n, 1, 3)
+        out["o" + L] = [2 if bt[i] and b[i] >= g[i] else 1 if gt[i] else 2 if bt[i] else 0 for i in range(n)]
+    return out
+
+
+# ------------------------------------------------------------------ pit lane
+def carregar_box(pid, geo):
+    """Pit lane: o do OpenStreetMap (vem com o programa, da entrada à saída) tem preferência; senão o das gravações."""
+    b = _ler(os.path.join(PASTA_BASE, f"{pid}_box.json"))
+    if b and b.get("ref") == _ref(geo) and b.get("fonte") == "OpenStreetMap" and b.get("linha"):
+        return b
+    for base in (False, True):
+        b = _ler(os.path.join(PASTA_BASE if base else PASTA, f"{pid}_box.json"))
+        if b and b.get("ref") == _ref(geo) and b.get("linha"):
+            return b
+    return None
+
+
+def acumular_box(pid, geo, posicoes):
+    """Guarda o caminho do pit lane (posições com status de box). Fica com a passagem mais completa:
+    da entrada à saída, a cada ~3 m."""
+    if not geo or not geo.get("cx"):
+        return None
+    atual = carregar_box(pid, geo)
+    melhor = None
+    for ps in posicoes.values():
+        trecho = []
+        for p in ps:
+            box = p[8] if len(p) > 8 else 0
+            if box:
+                if not trecho or (p[3] - trecho[-1][0]) ** 2 + (p[4] - trecho[-1][1]) ** 2 >= 9:
+                    trecho.append((round(p[3], 1), round(p[4], 1)))
+            elif trecho:
+                if len(trecho) > 20 and (melhor is None or len(trecho) > len(melhor)):
+                    melhor = trecho
+                trecho = []
+        if len(trecho) > 20 and (melhor is None or len(trecho) > len(melhor)):
+            melhor = trecho
+    if not melhor or (atual and len(atual["linha"]) >= len(melhor)):
+        return atual
+    novo = {"ref": _ref(geo), "linha": [list(p) for p in melhor]}
+    try:
+        os.makedirs(PASTA, exist_ok=True)
+        with open(os.path.join(PASTA, f"{pid}_box.json"), "w", encoding="utf-8") as f:
+            json.dump(novo, f)
+    except OSError:
+        pass
+    return novo
+
+
+def carregar_muros(pid, geo):
+    """Muros da pista (do OpenStreetMap, já encaixados no traçado do jogo), se batem com a linha central."""
+    for base in (False, True):
+        m = _ler(os.path.join(PASTA_BASE if base else PASTA, f"{pid}_muros.json"))
+        if m and m.get("ref") == _ref(geo) and m.get("muros"):
+            return m
+    return None
+
+
+def para_relatorio(geo, passo, n, piso=None, muros=None, box=None):
     """Linha central e bordas na grade do relatório (um ponto a cada `passo` metros)."""
     if not geo or not geo.get("esq"):
         return None
+    if piso and geo.get("fonte") == "acumulada":
+        # largura pelos pneus no asfalto (mais preciso que o centro do carro + folga)
+        geo = dict(geo)
+        for L, k in (("l", "esq"), ("r", "dir")):
+            a = piso["a" + L]
+            if sum(1 for v in a if v is not None) > len(a) * 0.6:
+                ult = None
+                cheio = []
+                for i, v in enumerate(a):
+                    ult = v if v is not None else ult
+                    cheio.append(max(MEIA_MIN, (ult if ult is not None else geo[k][i]) + 0.3))
+                geo[k] = _suave(cheio, 3)
     ex, ez, dx, dz = _bordas(geo)
     d = [i * geo["passo"] for i in range(len(geo["cx"]))]
     alvo = [i * passo for i in range(n)]
     f = lambda ys: [round(v, 1) for v in analise._reamostrar(d, ys, alvo)]
-    return {"fonte": geo["fonte"], "sessoes": geo.get("sessoes"), "quando": geo.get("quando"),
-            "cx": f(geo["cx"]), "cz": f(geo["cz"]), "ex": f(ex), "ez": f(ez), "dx": f(dx), "dz": f(dz)}
+    out = {"fonte": geo["fonte"], "sessoes": geo.get("sessoes"), "quando": geo.get("quando"),
+           "cx": f(geo["cx"]), "cz": f(geo["cz"]), "ex": f(ex), "ez": f(ez), "dx": f(dx), "dz": f(dz)}
+    pr = piso_relatorio(piso, geo)
+    if pr:
+        # zebra: largura no ponto mais próximo (sem interpolar, para não borrar as pontas); escape idem
+        m = len(geo["cx"])
+        perto = lambda ys: [ys[min(m - 1, int(round(t / geo["passo"])))] for t in alvo]
+        out.update({k: perto(v) for k, v in pr.items()})
+        out["piso_ids"] = len(piso.get("ids") or [])
+    if box:
+        out["box"] = box["linha"]
+    if muros:
+        out["muros"] = muros["muros"]
+        out["muros_credito"] = muros.get("credito")
+        if muros.get("solo"):
+            out["solo"] = muros["solo"]   # terreno em volta: areia, grama...
+    return out

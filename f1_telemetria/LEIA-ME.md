@@ -65,11 +65,15 @@ Quem preferir o modo texto pode rodar `modo_texto.bat` ou `python gravar.py`.
 - **Resumo**: posição, melhor volta e diferença para a mais rápida, volta ideal
   (soma dos seus melhores setores), ritmo médio e consistência, velocidade máxima,
   pit stops, punições.
-  - **Seu resumo**: curvas onde você perde para o mais rápido da sessão (freada antes ou
+  - **Seu resumo**: na classificação, sua melhor volta contra a mais rápida da sessão; na corrida,
+    o seu **ritmo** (a volta mais perto da mediana das suas voltas limpas) contra o piloto de melhor
+    ritmo. Dá para escolher outro piloto em **Comparar com**. Mostra curvas onde você perde (freada antes ou
     depois, velocidade no meio, retomada do acelerador), travamentos, patinação,
     sub/sobreesterço com sugestão de acerto, bateria (onde zera, onde o rival usa boost
     e você não) e pneus (temperatura de abertura da volta, janela ideal do composto,
     superaquecimento e pressão). Clique no número da curva para abrir na Análise de volta.
+  - **Temperatura dos pneus por composto**: pelo **núcleo** (o número de cima na tela de pneus do
+    jogo, que define a aderência), com a superfície nas curvas como apoio.
   - **Resumo da sessão**: rankings de velocidade máxima, velocidade média, speed trap,
     melhor volta, melhores setores, volta ideal, consistência, voltas válidas e avisos
     de limite de pista.
@@ -92,6 +96,12 @@ Quem preferir o modo texto pode rodar `modo_texto.bat` ou `python gravar.py`.
   passe o mouse em um e o ponto aparece nos outros; clique numa curva (na faixa, na tabela
   ou no mapa) para dar zoom; clique em S1, S2 ou S3 para ver só aquele setor.
   O mapa pode ser colorido por ganho/perda, bateria, velocidade ou setores.
+  O ponto **LC** (no gráfico da bateria e no mapa) marca onde a volta atingiu o limite de coleta
+  de energia que o jogo permite por volta.
+  O mapa também tem a vista **3D (beta)**, e o replay tem câmera atrás do carro em 3D. Zebras,
+  grama, brita e pit lane vêm das suas gravações; em Bahrein, Barcelona, Silverstone e Lusail
+  também os muros e grades (dados do OpenStreetMap, veja `LICENCA-mapas-osm.txt`). O carro 3D é
+  baseado no modelo de Abu Saif (CC BY 4.0, veja `LICENCA-modelo-carro.txt`).
   Na opção **traçado e replay**, o mapa mostra a pista com os dois traçados e os dois
   carrinhos andando no mesmo tempo de volta (play/pause, velocidade 0,25× a 2×, câmera
   seguindo os carros, botão ⛶ para tela cheia). Quando a asa abre (modo reta), sai um
@@ -105,7 +115,13 @@ Quem preferir o modo texto pode rodar `modo_texto.bat` ou `python gravar.py`.
 - **Pneus, combustível e energia** (corrida): desgaste e temperatura dos pneus,
   saldo de combustível desde a largada e ERS em %. Na classificação, aba **Energia**.
   Nas duas, dá para comparar a energia volta a volta com outros pilotos.
-- **Eventos**: punições, ultrapassagens, safety car, colisões, voltas mais rápidas.
+- **Seu estilo**: seu perfil de pilotagem ao longo das sessões e a parte **Bateria** (onde você mais
+  gasta e recupera, entre quais curvas atinge o limite de coleta, onde a bateria zera, saldo por volta).
+- **Eventos**: punições, ultrapassagens, safety car, colisões, voltas mais rápidas e **Lances**:
+  cada toque ou batida com dano, num replay visto de cima com velocidade, acelerador, freio, marcha e
+  volante de cada piloto (para ver se alguém freou ou acelerou no momento do contato).
+- **Modo espectador**: se você só assistiu à sessão, o relatório avisa e acompanha o vencedor (não
+  mexe no seu perfil nem no setup).
 
 Todos os gráficos arrastam (pan) com o mouse; use os botões + e − no canto para zoom.
 

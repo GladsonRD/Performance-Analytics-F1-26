@@ -1,0 +1,9 @@
+Muros, grades e pit lane das pistas (arquivos pistas_base/*_muros.json e *_box.json)
+
+Dados: © colaboradores do OpenStreetMap (https://www.openstreetmap.org/copyright)
+Licença: Open Database License (ODbL) 1.0
+https://opendatacommons.org/licenses/odbl/1-0/
+
+Alterações: só os muros, grades e pit lanes perto da pista foram mantidos, convertidos
+para as coordenadas do jogo (encaixe no traçado gravado) e simplificados a cada ~4 m.
+Os arquivos derivados continuam sob a ODbL.
